@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "Accounting firm",
+  "hosts": ["chatgpt.com", "chat.openai.com", "claude.ai", "gemini.google.com", "copilot.microsoft.com"],
+  "defaultAction": "warn",
+  "logging": "event",
+  "rules": [
+    { "detector": "iban", "action": "redact" },
+    { "detector": "credit_card", "action": "block" },
+    { "detector": "at_svnr", "action": "redact" },
+    { "detector": "email", "action": "warn" },
+    { "detector": "phone", "action": "allow" },
+    { "detector": "api_key", "action": "block" },
+    { "detector": "client_code", "action": "redact", "pattern": "\\b[A-Z]{2}\\d{4}-[A-Z]{3}\\b", "label": "[REDACTED:CLIENT]" }
+  ]
+}

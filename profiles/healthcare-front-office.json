@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "Healthcare front office (AT)",
+  "hosts": ["chatgpt.com", "chat.openai.com", "claude.ai", "gemini.google.com", "copilot.microsoft.com"],
+  "defaultAction": "warn",
+  "logging": "event",
+  "rules": [
+    { "detector": "at_svnr", "action": "block" },
+    { "detector": "credit_card", "action": "block" },
+    { "detector": "iban", "action": "redact" },
+    { "detector": "email", "action": "redact" },
+    { "detector": "phone", "action": "redact" },
+    { "detector": "api_key", "action": "block" },
+    { "detector": "patient_id", "action": "block", "pattern": "\\bPAT-\\d{5,8}\\b", "label": "[REDACTED:PATIENT]" }
+  ]
+}

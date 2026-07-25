@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.bundle.js
+apps/extension/background.js
+.DS_Store

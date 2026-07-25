@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 300px; margin: 0; padding: 16px; background: #101418; color: #e8edf2;
+         font: 13px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .2px; }
+  .sub { color: #7f8a95; margin: 0 0 12px; }
+  .row { display: flex; justify-content: space-between; padding: 6px 0;
+         border-top: 1px solid #1d242c; }
+  .row:first-of-type { border-top: 0; }
+  .val { color: #9fd0ff; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; margin-top: 12px; padding: 3px 8px; border-radius: 5px;
+           background: #14301c; color: #7fd79a; font-size: 12px; }
+  .badge.unmanaged { background: #2a2416; color: #d7bd7f; }
+</style>
+</head>
+<body>
+  <h1>PromptWarden</h1>
+  <p class="sub">Guardrails for AI chat</p>
+  <div class="row"><span>Active policy</span><span class="val" id="policy-name">–</span></div>
+  <div class="row"><span>Events on device</span><span class="val" id="event-count">0</span></div>
+  <span class="badge unmanaged" id="mode">Standalone</span>
+  <script src="popup.js"></script>
+</body>
+</html>

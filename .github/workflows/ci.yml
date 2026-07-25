@@ -18,6 +18,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Typecheck extension
+        run: npm run typecheck
+
       - name: Test (includes <10ms bench gate)
         run: npm test
 
@@ -28,12 +31,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          PATTERN='fetch\(|XMLHttpRequest|sendBeacon|WebSocket\(|EventSource\(|import\('
+          PATTERN='fetch\(|XMLHttpRequest|sendBeacon|WebSocket\(|EventSource\(|import\(|new Image\(|connectNative'
           TARGETS=(
             "apps/extension/src"
             "packages/policy-engine/src"
             "apps/extension/content.bundle.js"
             "apps/extension/background.js"
+            "apps/extension/popup.js"
+            "apps/extension/popup.html"
           )
 
           echo "Scanning for network egress APIs: $PATTERN"
@@ -54,4 +59,4 @@ jobs:
             exit 1
           fi
 
-          echo "No-egress gate passed: no fetch/XHR/sendBeacon/WebSocket/EventSource/dynamic-import found."
+          echo "No-egress gate passed: no fetch/XHR/sendBeacon/WebSocket/EventSource/dynamic-import/Image-beacon/connectNative found."

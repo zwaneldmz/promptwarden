@@ -54,6 +54,11 @@ export interface Policy {
    * "closed" blocks it (strictness first, for managed deployments).
    */
   onError?: "open" | "closed";
+  /**
+   * Days locally buffered events are kept before age-based pruning
+   * (Art. 5(1)(e) storage limitation). Default 90.
+   */
+  retentionDays?: number;
 }
 
 export interface Finding {
@@ -101,6 +106,12 @@ export function parsePolicy(input: unknown): Policy {
   }
   if (p.onError !== undefined && p.onError !== "open" && p.onError !== "closed") {
     throw new Error('onError must be "open" or "closed"');
+  }
+  if (
+    p.retentionDays !== undefined &&
+    (typeof p.retentionDays !== "number" || !Number.isFinite(p.retentionDays) || p.retentionDays <= 0)
+  ) {
+    throw new Error("retentionDays must be a positive number");
   }
   if (!Array.isArray(p.rules)) throw new Error("Policy rules must be an array");
   for (const r of p.rules as Array<Record<string, unknown>>) {

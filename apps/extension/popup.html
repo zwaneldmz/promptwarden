@@ -37,10 +37,13 @@
   .ev-action.warn { background: #2a2416; color: #d7bd7f; }
   .ev-action.redact { background: #142430; color: #9fd0ff; }
   .empty { color: #7f8a95; font-style: italic; padding: 8px 0; }
-  button#clear-events { margin-top: 12px; width: 100%; padding: 6px 0; border-radius: 5px;
-        border: 1px solid #2a323b; background: #171d24; color: #e8edf2; font: inherit;
-        cursor: pointer; }
-  button#clear-events:hover { background: #1d242c; }
+  button#clear-events, button#export-aggregate { margin-top: 8px; width: 100%; padding: 6px 0;
+        border-radius: 5px; border: 1px solid #2a323b; background: #171d24; color: #e8edf2;
+        font: inherit; cursor: pointer; }
+  button#clear-events:hover, button#export-aggregate:hover { background: #1d242c; }
+  button#export-aggregate { margin-top: 12px; border-color: #2c4a72; color: #9fd0ff; }
+  button#export-aggregate[hidden] { display: none; }
+  p.hint { color: #7f8a95; font-size: 11px; margin: 6px 0 0; }
 </style>
 </head>
 <body>
@@ -64,6 +67,8 @@
   <ul class="events" id="event-list"></ul>
 
   <button id="clear-events" type="button">Clear events</button>
+  <button id="export-aggregate" type="button" hidden>Export aggregate report</button>
+  <p class="hint">Exports day-level counts only — no per-event rows, no device ID, no content.</p>
 
   <script src="popup.js"></script>
 </body>

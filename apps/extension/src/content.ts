@@ -101,7 +101,44 @@ function editableInForm(form: HTMLFormElement): HTMLElement | null {
 
 /* ------------------------------ submit path ------------------------------ */
 
-function onSubmitAttempt(e: Event, editable: HTMLElement) {
+/**
+ * How a submit attempt was triggered, so "Send anyway" can resume it the
+ * same way instead of always faking an Enter keypress. A synthetic Enter
+ * silently no-ops on sites where Enter doesn't send (click-only UIs, or
+ * ChatGPT's "Enter = newline" setting) — the click that gets swallowed by
+ * `stopImmediatePropagation` below is the only thing that would have sent it.
+ */
+type SubmitTrigger =
+  | { kind: "keyboard" }
+  | { kind: "click"; button: HTMLElement }
+  | { kind: "submit"; form: HTMLFormElement };
+
+/**
+ * Resume the send exactly the way it was originally triggered. Falls back to
+ * the Enter re-dispatch if the stored button/form was detached by a
+ * framework re-render since interception.
+ */
+function resumeSubmit(trigger: SubmitTrigger, editable: HTMLElement) {
+  armBypassNextSubmit();
+  if (trigger.kind === "click" && trigger.button.isConnected) {
+    // The click listener below checks bypassNextSubmit before it even looks
+    // for a matching button, so this resumed click passes straight through.
+    trigger.button.click();
+    return;
+  }
+  if (trigger.kind === "submit" && trigger.form.isConnected) {
+    editable.focus();
+    trigger.form.requestSubmit();
+    return;
+  }
+  editable.focus();
+  // Re-dispatch Enter so the page's own submit handler runs.
+  editable.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+  );
+}
+
+function onSubmitAttempt(e: Event, editable: HTMLElement, trigger: SubmitTrigger) {
   // Consumed here without clearing: the same "send anyway" resubmission can
   // legitimately reach this function twice (once when the keydown listener
   // below catches our synthetic Enter, again if that leads to a real
@@ -134,14 +171,7 @@ function onSubmitAttempt(e: Event, editable: HTMLElement) {
     if (result.needsWarning) {
       actions.push({
         label: "Send anyway",
-        onPick: () => {
-          armBypassNextSubmit();
-          editable.focus();
-          // Re-dispatch Enter so the page's own submit handler runs.
-          editable.dispatchEvent(
-            new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
-          );
-        },
+        onPick: () => resumeSubmit(trigger, editable),
       });
     }
   }
@@ -190,22 +220,55 @@ document.addEventListener(
     if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
     if (!enforcing()) return;
     const editable = activeEditable(e.target);
-    if (editable) onSubmitAttempt(e, editable);
+    if (editable) onSubmitAttempt(e, editable, { kind: "keyboard" });
   },
   true, // capture phase: run before the page's own handlers
 );
+
+/**
+ * Word-based replacement for the old attribute substring selector, which
+ * matched any button whose aria-label/data-testid contained "end" — German
+ * Beenden/Anwenden/Verwenden/Ausblenden and English Append/Extend all
+ * contain "end" but (verified with actual string checks) none of them
+ * contain "send", "senden", "schick", or "submit" as a substring: none of
+ * those four German words even has an "s" in it. Absenden/Senden do contain
+ * "senden". No site-specific selectors — stays a generic, word-based check.
+ */
+// Substring on purpose: "Absenden"/"Abschicken" embed the words mid-string,
+// so \b anchors would miss them. Residual false positive: labels like
+// "Sender". Accepted — tighten per-word only if a real site surfaces one.
+const SEND_WORD = /send|senden|schick|submit/i;
+
+function isLikelySendButton(btn: Element): boolean {
+  if (btn instanceof HTMLButtonElement && btn.type === "submit") return true;
+  const ariaLabel = btn.getAttribute("aria-label") ?? "";
+  const title = btn.getAttribute("title") ?? "";
+  const dataTestId = btn.getAttribute("data-testid") ?? "";
+  const text = btn.textContent?.trim() ?? "";
+  return SEND_WORD.test(`${ariaLabel} ${title} ${dataTestId} ${text}`);
+}
 
 document.addEventListener(
   "click",
   (e) => {
     if (!enforcing()) return;
-    const btn = (e.target as Element)?.closest?.('button[type="submit"], button[aria-label*="end" i], button[data-testid*="send" i]');
-    if (!btn) return;
+    const target = e.target as Element | null;
+    // Never treat a click inside our own guardrail dialog as a page
+    // send-button click: "Send anyway" itself matches SEND_WORD, and
+    // without this exclusion it would swallow its own click and re-open
+    // the dialog instead of resuming the send (Finding B).
+    if (target?.closest?.(`#${UI_ID}`)) return;
+    // Armed only while we're re-clicking the button stored below to resume
+    // a "Send anyway"; let that resumed click pass straight through
+    // unexamined rather than re-evaluating (and re-intercepting) it.
+    if (bypassNextSubmit) return;
+    const btn = target?.closest?.("button, [role='button' i]");
+    if (!btn || !isLikelySendButton(btn)) return;
     // Clicking the button usually moves focus to it first, so
     // `activeEditable(null)`'s document.activeElement fallback misses; fall
     // back further to the last editable we saw focused.
     const editable = activeEditable(null) ?? connectedLastFocused();
-    if (editable) onSubmitAttempt(e, editable);
+    if (editable) onSubmitAttempt(e, editable, { kind: "click", button: btn as HTMLElement });
   },
   true,
 );
@@ -221,7 +284,9 @@ document.addEventListener(
     if (!enforcing()) return;
     const form = e.target instanceof HTMLFormElement ? e.target : null;
     const editable = (form && editableInForm(form)) ?? connectedLastFocused();
-    if (editable) onSubmitAttempt(e, editable);
+    if (editable) {
+      onSubmitAttempt(e, editable, form ? { kind: "submit", form } : { kind: "keyboard" });
+    }
   },
   true,
 );

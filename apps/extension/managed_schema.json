@@ -5,6 +5,12 @@
       "title": "PromptWarden policy document (JSON string)",
       "description": "A serialized PromptWarden policy. Distributed by the organization via Chrome Enterprise policy / Google Admin console. Takes precedence over any locally configured policy.",
       "type": "string"
+    },
+    "extraHosts": {
+      "title": "Additional origins to scan (beyond the default 7)",
+      "description": "Origin match patterns (e.g. 'https://internal-chat.example.com/*') the admin wants PromptWarden to scan in addition to the built-in default hosts. Listing an origin here does not by itself grant access to it: the extension still needs the 'https://*/*' optional host permission for that origin before it will inject there. See docs/HOST_COVERAGE.md for how that permission is granted (ExtensionSettings runtime_allowed_hosts, or the popup's one-click grant) and for the current implementation status of the background-side registration this field feeds.",
+      "type": "array",
+      "items": { "type": "string" }
     }
   }
 }

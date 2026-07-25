@@ -47,7 +47,11 @@ Boundary rule: anything a single privacy-conscious individual needs is free; any
 - Detectors with checksum validation: credit card (Luhn), IBAN (mod-97), Austrian SVNR (check digit), structured API keys, email, phone
 - Custom regex rules for org-specific identifiers
 - `toLogRecord` as the single privacy gate — event mode provably contains no content (tested)
-- 14 passing tests; CI: GitHub Actions running `tsc && node --test` on push
+- 20 passing tests; CI (`.github/workflows/ci.yml`): `npm test` (builds the engine, runs
+  `node --test`, includes the <10ms benchmark gate), `npm run build:extension` (esbuild), and a
+  no-egress gate that greps the extension/engine source and the built bundles for
+  `fetch`/`XMLHttpRequest`/`sendBeacon`/`WebSocket`/`EventSource`/dynamic `import()` and fails
+  the build if any are found
 
 ### Phase 1 — Extension (weeks 3–6) ✅ skeleton built in this session
 - MV3, selector-less interception (capture-phase Enter + generic submit-button click)

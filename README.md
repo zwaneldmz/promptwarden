@@ -13,7 +13,7 @@ records that provably contain no prompt content.
 ```
 packages/policy-engine   Dependency-free TS library: policy schema, detectors
                          (Luhn, IBAN mod-97, AT SVNR check digit, API keys),
-                         evaluation, privacy-gated logging. 14 tests.
+                         evaluation, privacy-gated logging. 20 tests.
 apps/extension           Manifest V3 extension: selector-less interception,
                          guardrail UI, managed-storage policy support.
 profiles/                Example org profiles (healthcare, accounting).
@@ -44,5 +44,17 @@ or Group Policy) using the `policy` key defined in
 
 ## License
 
-To be finalized before first public release (Apache-2.0 or MPL-2.0 under
-consideration). Console and audit tier are separate, commercial components.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The "PromptWarden"
+name is governed separately — see [TRADEMARKS.md](TRADEMARKS.md). Console and
+audit tier (not yet built) are planned as separate, commercial components.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for how to report a vulnerability.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), including the DCO sign-off
+requirement and the ground rules (no network calls on the inline path, all
+logging through `toLogRecord`, no site-specific selectors, no new
+dependencies).

@@ -2,9 +2,8 @@
  * Background service worker.
  *
  * Policy precedence: managed storage (admin-pushed) > local (user-configured).
- * Events are buffered locally; in managed deployments the console's ingest
- * endpoint (policyUrl origin) receives them in batches. In standalone mode
- * they stay on-device.
+ * Events are buffered locally in chrome.storage.local and never leave the
+ * device — there is no ingest endpoint and this file makes no network calls.
  *
  * Event records arrive already privacy-filtered by the policy engine's
  * `toLogRecord` (see packages/policy-engine/src/engine.ts) — this file must

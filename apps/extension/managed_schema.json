@@ -5,11 +5,6 @@
       "title": "PromptWarden policy document (JSON string)",
       "description": "A serialized PromptWarden policy. Distributed by the organization via Chrome Enterprise policy / Google Admin console. Takes precedence over any locally configured policy.",
       "type": "string"
-    },
-    "policyUrl": {
-      "title": "Policy URL",
-      "description": "HTTPS URL of a signed policy document served by the PromptWarden console. Polled by the background worker.",
-      "type": "string"
     }
   }
 }

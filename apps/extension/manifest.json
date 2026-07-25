@@ -5,6 +5,12 @@
   "description": "Guardrails for AI chat: warns, redacts, or blocks sensitive customer data before it leaves the browser.",
   "permissions": ["storage"],
   "host_permissions": [],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
@@ -22,6 +28,15 @@
       "all_frames": true
     }
   ],
-  "action": { "default_popup": "popup.html", "default_title": "PromptWarden" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PromptWarden",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
   "storage": { "managed_schema": "managed_schema.json" }
 }

@@ -22,6 +22,7 @@ import {
   SavedSelection,
   activeEditable,
   insertText,
+  isEditable,
   readText,
   saveSelection,
   writeText,
@@ -29,8 +30,27 @@ import {
 
 let policy: Policy = FALLBACK_POLICY;
 let bypassNextSubmit = false; // set after the user chooses "send anyway" / redact
+/**
+ * Timer that auto-expires `bypassNextSubmit`. A bare boolean set on "send
+ * anyway" and cleared only by the next submit attempt is a stale open gate:
+ * if the re-dispatched Enter never reaches a real submit handler (click-only
+ * sites, an editable detached by a framework re-render), the flag stays
+ * armed and silently waves through a later, unrelated prompt. Cleared by
+ * whichever comes first: this timer, or the "any subsequent input" listener
+ * below.
+ */
+let bypassTimer: ReturnType<typeof setTimeout> | null = null;
 /** True only while we synthesize an event to release an upload we held. */
 let replaying = false;
+/**
+ * The most recently focused editable, tracked via a capture-phase `focusin`
+ * listener. Clicking a send button usually moves focus to the button before
+ * our click listener runs, so `document.activeElement` is the button by
+ * then and the click path's fallback misses entirely — this is the
+ * fallback of last resort for the click and submit paths. Re-checked for
+ * `isConnected` before use since a framework re-render can detach it.
+ */
+let lastFocusedEditable: HTMLElement | null = null;
 
 send({ type: "get-policy" }, (resp) => {
   if (chrome.runtime.lastError) return;
@@ -47,13 +67,48 @@ function enforcing(): boolean {
   return hostMatches(policy, location.hostname);
 }
 
+/** Arm the bypass gate for exactly one resubmission, auto-expiring it. */
+function armBypassNextSubmit() {
+  bypassNextSubmit = true;
+  if (bypassTimer !== null) clearTimeout(bypassTimer);
+  bypassTimer = setTimeout(() => {
+    bypassNextSubmit = false;
+    bypassTimer = null;
+  }, 2000);
+}
+
+function disarmBypassNextSubmit() {
+  bypassNextSubmit = false;
+  if (bypassTimer !== null) {
+    clearTimeout(bypassTimer);
+    bypassTimer = null;
+  }
+}
+
+/** Fallback of last resort for the click and submit paths. */
+function connectedLastFocused(): HTMLElement | null {
+  return lastFocusedEditable && lastFocusedEditable.isConnected ? lastFocusedEditable : null;
+}
+
+/** The first genuinely editable descendant of a submitted form. */
+function editableInForm(form: HTMLFormElement): HTMLElement | null {
+  const candidates = form.querySelectorAll<HTMLElement>("textarea, input, [contenteditable]");
+  for (const el of candidates) {
+    if (isEditable(el)) return el;
+  }
+  return null;
+}
+
 /* ------------------------------ submit path ------------------------------ */
 
 function onSubmitAttempt(e: Event, editable: HTMLElement) {
-  if (bypassNextSubmit) {
-    bypassNextSubmit = false;
-    return;
-  }
+  // Consumed here without clearing: the same "send anyway" resubmission can
+  // legitimately reach this function twice (once when the keydown listener
+  // below catches our synthetic Enter, again if that leads to a real
+  // "submit" event), and both must skip evaluation. Clearing is handled
+  // solely by the timer and the "any subsequent input" listener so a later,
+  // different prompt is never accidentally waved through.
+  if (bypassNextSubmit) return;
   const text = readText(editable);
   if (!text.trim()) return;
 
@@ -80,7 +135,7 @@ function onSubmitAttempt(e: Event, editable: HTMLElement) {
       actions.push({
         label: "Send anyway",
         onPick: () => {
-          bypassNextSubmit = true;
+          armBypassNextSubmit();
           editable.focus();
           // Re-dispatch Enter so the page's own submit handler runs.
           editable.dispatchEvent(
@@ -101,6 +156,34 @@ function onSubmitAttempt(e: Event, editable: HTMLElement) {
   });
 }
 
+/**
+ * Track the last-focused editable so the click and submit paths have a
+ * fallback for when focus has already moved elsewhere by the time they run.
+ */
+document.addEventListener(
+  "focusin",
+  (e) => {
+    const editable = activeEditable(e.target);
+    if (editable) lastFocusedEditable = editable;
+  },
+  true,
+);
+
+/**
+ * Any real user input disarms a still-armed bypass immediately, rather than
+ * waiting out the timer — so typing a new, unrelated prompt right after a
+ * "send anyway" is always scanned. isTrusted-gated: our own synthetic input
+ * events (file-release replay, redact/paste insertion) must not disarm a
+ * legitimately armed bypass.
+ */
+document.addEventListener(
+  "input",
+  (e) => {
+    if (e.isTrusted && bypassNextSubmit) disarmBypassNextSubmit();
+  },
+  true,
+);
+
 document.addEventListener(
   "keydown",
   (e) => {
@@ -118,7 +201,26 @@ document.addEventListener(
     if (!enforcing()) return;
     const btn = (e.target as Element)?.closest?.('button[type="submit"], button[aria-label*="end" i], button[data-testid*="send" i]');
     if (!btn) return;
-    const editable = activeEditable(null);
+    // Clicking the button usually moves focus to it first, so
+    // `activeEditable(null)`'s document.activeElement fallback misses; fall
+    // back further to the last editable we saw focused.
+    const editable = activeEditable(null) ?? connectedLastFocused();
+    if (editable) onSubmitAttempt(e, editable);
+  },
+  true,
+);
+
+/**
+ * A genuine <form> submit — Enter inside a plain form, a page calling
+ * `requestSubmit()`, or any other path that bypasses the click/keydown
+ * listeners above — was previously not observed at all.
+ */
+document.addEventListener(
+  "submit",
+  (e) => {
+    if (!enforcing()) return;
+    const form = e.target instanceof HTMLFormElement ? e.target : null;
+    const editable = (form && editableInForm(form)) ?? connectedLastFocused();
     if (editable) onSubmitAttempt(e, editable);
   },
   true,

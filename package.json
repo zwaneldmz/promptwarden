@@ -2,16 +2,21 @@
   "name": "promptwarden",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "build:engine": "cd packages/policy-engine && ../../node_modules/.bin/tsc",
     "test": "npm run build:engine && cd packages/policy-engine && node --test 'dist/test/*.test.js'",
-    "build:extension": "esbuild apps/extension/src/content.ts --bundle --format=iife --outfile=apps/extension/content.bundle.js --alias:@promptwarden/policy-engine=./packages/policy-engine/src/index.ts && esbuild apps/extension/src/background.ts --bundle --format=iife --outfile=apps/extension/background.js"
+    "build:extension": "esbuild apps/extension/src/content.ts --bundle --format=iife --outfile=apps/extension/content.bundle.js --alias:@promptwarden/policy-engine=./packages/policy-engine/src/index.ts && esbuild apps/extension/src/background.ts --bundle --format=iife --outfile=apps/extension/background.js",
+    "smoke": "node tools/e2e-smoke.mjs"
   },
   "devDependencies": {
     "@types/chrome": "*",
     "@types/node": "*",
     "esbuild": "^0.28.1",
+    "playwright-core": "^1.62.0",
     "typescript": "^7.0.2"
   }
 }

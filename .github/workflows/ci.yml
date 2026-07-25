@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test (includes <10ms bench gate)
+        run: npm test
+
+      - name: Build extension bundles
+        run: npm run build:extension
+
+      - name: No-egress gate
+        run: |
+          set -euo pipefail
+
+          PATTERN='fetch\(|XMLHttpRequest|sendBeacon|WebSocket\(|EventSource\(|import\('
+          TARGETS=(
+            "apps/extension/src"
+            "packages/policy-engine/src"
+            "apps/extension/content.bundle.js"
+            "apps/extension/background.js"
+          )
+
+          echo "Scanning for network egress APIs: $PATTERN"
+          FOUND=0
+          for t in "${TARGETS[@]}"; do
+            if [ -e "$t" ]; then
+              if grep -rnE "$PATTERN" "$t"; then
+                FOUND=1
+              fi
+            else
+              echo "::error::no-egress gate target missing: $t"
+              FOUND=1
+            fi
+          done
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo "::error::NO-EGRESS GATE FAILED: network API usage found (or a scan target is missing) above."
+            exit 1
+          fi
+
+          echo "No-egress gate passed: no fetch/XHR/sendBeacon/WebSocket/EventSource/dynamic-import found."

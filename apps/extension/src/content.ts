@@ -239,11 +239,16 @@ function onFileInputEvent(e: Event) {
           onDisplaced: () => clearFileInput(input),
         });
       })
-      // Failing open on our own error: a bug in the guardrail must not leave
-      // the user unable to upload anything.
+      // policy.onError decides: "open" (default) releases the upload so a
+      // guardrail bug can't block everything; "closed" blocks unscanned files.
       .catch(() => {
         report("file-scan-error");
-        releaseFileInput(input);
+        if (failClosed()) {
+          clearFileInput(input);
+          showScanErrorBlocked();
+        } else {
+          releaseFileInput(input);
+        }
       });
 }
 
@@ -296,7 +301,11 @@ document.addEventListener(
       })
       .catch(() => {
         report("file-scan-error");
-        replayDrop(target, files);
+        if (failClosed()) {
+          showScanErrorBlocked();
+        } else {
+          replayDrop(target, files);
+        }
       });
   },
   true,
@@ -328,6 +337,18 @@ function clearFileInput(input: HTMLInputElement) {
 
 function unreadableNote(count: number): string {
   return count > 0 ? ` ${count} file(s) could not be scanned.` : "";
+}
+
+function failClosed(): boolean {
+  return policy.onError === "closed";
+}
+
+function showScanErrorBlocked() {
+  showGuardrail({
+    title: "This file can't be uploaded",
+    detail: "The file couldn't be scanned and your organization's policy blocks unscanned uploads.",
+    actions: [{ label: "Close", onPick: () => {} }],
+  });
 }
 
 /** Re-deliver a held drop with a freshly built DataTransfer. */

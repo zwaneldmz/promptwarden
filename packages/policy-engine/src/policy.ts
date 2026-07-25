@@ -48,6 +48,12 @@ export interface Policy {
   logging: LoggingMode;
   /** Fallback action for detectors not listed in `rules`. */
   defaultAction: Action;
+  /**
+   * What a guardrail failure (e.g. an unreadable/unscannable file) does:
+   * "open" releases the content unscanned (availability first, the default),
+   * "closed" blocks it (strictness first, for managed deployments).
+   */
+  onError?: "open" | "closed";
 }
 
 export interface Finding {
@@ -92,6 +98,9 @@ export function parsePolicy(input: unknown): Policy {
   }
   if (!LOGGING.includes(p.logging as LoggingMode)) {
     throw new Error("logging must be one of " + LOGGING.join(", "));
+  }
+  if (p.onError !== undefined && p.onError !== "open" && p.onError !== "closed") {
+    throw new Error('onError must be "open" or "closed"');
   }
   if (!Array.isArray(p.rules)) throw new Error("Policy rules must be an array");
   for (const r of p.rules as Array<Record<string, unknown>>) {

@@ -38,6 +38,14 @@ test("valid IBAN (mod-97) is redacted; corrupted IBAN is ignored", () => {
   assert.equal(invalid.findings.some((f) => f.detector === "iban"), false);
 });
 
+test("onError accepts open/closed, rejects anything else, and is optional", () => {
+  const base = { version: 1, name: "t", hosts: [], defaultAction: "warn", logging: "off", rules: [] };
+  assert.equal(parsePolicy({ ...base, onError: "open" }).onError, "open");
+  assert.equal(parsePolicy({ ...base, onError: "closed" }).onError, "closed");
+  assert.equal(parsePolicy(base).onError, undefined); // default: fail open
+  assert.throws(() => parsePolicy({ ...base, onError: "strict" }), /onError/);
+});
+
 test("lowercase and mixed-case IBANs are detected (validator normalizes case)", () => {
   const lower = evaluate("pay to at61 1904 3002 3457 3201 please", strict);
   assert.equal(lower.findings.some((f) => f.detector === "iban"), true);

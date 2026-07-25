@@ -61,8 +61,9 @@ export async function scanFiles(files: File[], policy: Policy): Promise<FileScan
     if (!text.trim()) continue;
     findings.push(...evaluate(text, policy).findings);
   }
-  // ponytail: unreadable-only scans stay silent (fail open, no dialog);
-  // surface them standalone if a stricter deployment needs fail-closed
+  // ponytail: unreadable-only scans stay silent (fail open, no dialog) even
+  // under policy onError:"closed", which today governs whole-scan failures;
+  // extend it to per-file read failures if a deployment needs that strictness
   if (findings.length === 0) return null;
 
   const blocked = findings.some((f) => f.action === "block");

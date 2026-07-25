@@ -38,6 +38,14 @@ test("valid IBAN (mod-97) is redacted; corrupted IBAN is ignored", () => {
   assert.equal(invalid.findings.some((f) => f.detector === "iban"), false);
 });
 
+test("lowercase and mixed-case IBANs are detected (validator normalizes case)", () => {
+  const lower = evaluate("pay to at61 1904 3002 3457 3201 please", strict);
+  assert.equal(lower.findings.some((f) => f.detector === "iban"), true);
+
+  const mixed = evaluate("pay to At61 1904 3002 3457 3201 please", strict);
+  assert.equal(mixed.findings.some((f) => f.detector === "iban"), true);
+});
+
 test("emails are redacted with surrounding text intact", () => {
   const r = evaluate("contact anna.maier@example.at about the claim", strict);
   assert.equal(r.redactedText, "contact [REDACTED:EMAIL] about the claim");

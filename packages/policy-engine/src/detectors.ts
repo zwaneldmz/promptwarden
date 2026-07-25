@@ -74,13 +74,29 @@ function ibanValid(candidate: string): boolean {
   return mod97(numeric) === 1;
 }
 
-const IBAN_CANDIDATE = /\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]){11,30}\b/g;
+// Case-insensitive: ibanValid() uppercases before validating, so lowercase
+// IBANs must reach it rather than being filtered out at candidate stage.
+const IBAN_CANDIDATE = /\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]){11,30}\b/gi;
 
 const iban: DetectorFn = (text) => {
   const out: RawMatch[] = [];
   for (const m of text.matchAll(IBAN_CANDIDATE)) {
-    if (!ibanValid(m[0])) continue;
-    out.push({ detector: "iban", start: m.index!, end: m.index! + m[0].length, match: m[0] });
+    // The greedy, case-insensitive candidate can overrun into following words
+    // ("AT61 … 3201 please"); trim from the right until it validates or gets
+    // too short to be an IBAN.
+    let candidate = m[0];
+    while (candidate.length >= 15) {
+      if (ibanValid(candidate)) {
+        out.push({
+          detector: "iban",
+          start: m.index!,
+          end: m.index! + candidate.length,
+          match: candidate,
+        });
+        break;
+      }
+      candidate = candidate.slice(0, -1).trimEnd();
+    }
   }
   return out;
 };

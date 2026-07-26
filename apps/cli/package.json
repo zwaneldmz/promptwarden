@@ -1,0 +1,16 @@
+{
+  "name": "promptwarden",
+  "version": "0.1.0",
+  "description": "Local, deterministic guardrail that scans stdin, files, and agentic-tool hooks for sensitive data (credit cards, IBANs, API keys, bulk PII) before it leaves the machine.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "promptwarden": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}

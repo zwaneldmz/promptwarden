@@ -1,23 +1,23 @@
 /**
- * File-attachment scanning.
- *
- * Two kinds of file are ever read — everything else is left completely
- * untouched: no read, no filename, no event, so a binary upload never
- * becomes a new logging surface.
+ * File-attachment scanning: the browser-specific `File`/`Blob` wrapper
+ * around the environment-agnostic core in
+ * `packages/policy-engine/src/scan-bytes.ts`. Everything about *what* gets
+ * scanned and *how* (the size caps, the text/office extension and MIME
+ * lists, classification, decoding, Office extraction, evaluation) lives in
+ * the engine so every adapter shares it; this file's job is narrower: read
+ * bytes out of a `File` with bounded memory and hand them to `scanBytes`.
  *
  *  - Text-like files (see `isTextLikeFile`): read directly, never more than
- *    the first MAX_TEXT_FILE_BYTES of one — this is the only gate a text
- *    file passes, so a partial scan of an oversized one is strictly better
- *    than skipping it outright.
+ *    the first MAX_TEXT_FILE_BYTES of one — sliced at the `Blob` level
+ *    before reading, so an oversized text file is never fully loaded into
+ *    memory just to scan its first megabyte.
  *  - Office Open XML files, .xlsx/.docx (see `isOfficeFile`): a ZIP's
  *    central directory lives at the end of the file, so unlike text there is
  *    no way to head-slice an oversized upload and still parse it — the
  *    whole file must be read into memory. Files over MAX_OFFICE_FILE_BYTES
- *    are skipped rather than partially read, and counted in `unreadable` so
- *    the guardrail dialog says so. Extraction goes through
- *    `extractOfficeText` (packages/policy-engine), a pure, dependency-free
- *    ZIP reader that inflates the document/sheet XML parts and strips them
- *    to plain text before handing it to the same `evaluate()` used for text.
+ *    are skipped rather than read at all (checked against `file.size`
+ *    before ever calling `arrayBuffer()`), and counted in `unreadable` so
+ *    the guardrail dialog says so.
  *
  * NOT scanned at all in v1: PDF, and the legacy binary Office formats
  * (.doc, .xls, .ppt) — none of those are ZIP/XML containers, so they need a
@@ -32,58 +32,27 @@ import {
   EvaluationResult,
   Finding,
   Policy,
-  evaluate,
-  extractOfficeText,
+  MAX_TEXT_FILE_BYTES,
+  MAX_OFFICE_FILE_BYTES,
+  classifyFile,
+  scanBytes,
 } from "@promptwarden/policy-engine";
 
-export const MAX_TEXT_FILE_BYTES = 1024 * 1024; // 1 MB
-
-/**
- * A ZIP's central directory lives at the end of the file, so an oversized
- * .xlsx/.docx can't be head-scanned the way an oversized text file can —
- * the whole thing has to be read. Capped instead: files over this size are
- * skipped and counted in `unreadable`, rather than read at all.
- */
-export const MAX_OFFICE_FILE_BYTES = 20 * 1024 * 1024; // 20 MB
-
-const TEXT_EXTENSIONS = [
-  ".csv", ".json", ".md", ".txt", ".tsv", ".log", ".xml",
-  ".yaml", ".yml", ".sql", ".eml", ".ini", ".conf",
-];
+export { MAX_TEXT_FILE_BYTES, MAX_OFFICE_FILE_BYTES };
 
 /** Text files only — Office files are handled entirely separately below. */
 export function isTextLikeFile(file: File): boolean {
-  const type = (file.type || "").toLowerCase();
-  // `application/json` is text in every practical sense and is what browsers
-  // report for .json picked from disk on some platforms.
-  if (type.startsWith("text/") || type === "application/json") return true;
-  const name = (file.name || "").toLowerCase();
-  return TEXT_EXTENSIONS.some((ext) => name.endsWith(ext));
+  return classifyFile(file.name, file.type) === "text";
 }
-
-const OFFICE_EXTENSIONS = [".xlsx", ".docx"];
-const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /** Office Open XML files (.xlsx/.docx) only — never true for text-like files. */
 export function isOfficeFile(file: File): boolean {
-  const type = (file.type || "").toLowerCase();
-  if (type === DOCX_MIME || type === XLSX_MIME) return true;
-  const name = (file.name || "").toLowerCase();
-  return OFFICE_EXTENSIONS.some((ext) => name.endsWith(ext));
-}
-
-/** Which office extractor applies, preferring the extension over MIME. */
-function officeKind(file: File): "xlsx" | "docx" {
-  const name = (file.name || "").toLowerCase();
-  if (name.endsWith(".xlsx")) return "xlsx";
-  if (name.endsWith(".docx")) return "docx";
-  return (file.type || "").toLowerCase() === XLSX_MIME ? "xlsx" : "docx";
+  return classifyFile(file.name, file.type) === "office";
 }
 
 /** Any file `scanFiles` will attempt to read: text-like or Office. */
 export function isScannableFile(file: File): boolean {
-  return isTextLikeFile(file) || isOfficeFile(file);
+  return classifyFile(file.name, file.type) !== "skip";
 }
 
 export interface FileScan {
@@ -105,41 +74,50 @@ export async function scanFiles(files: File[], policy: Policy): Promise<FileScan
   const findings: Finding[] = [];
   let unreadable = 0;
   for (const file of files) {
-    if (isOfficeFile(file)) {
+    const kind = classifyFile(file.name, file.type);
+    if (kind === "skip") continue;
+
+    if (kind === "office") {
       // No head-slicing possible (the central directory is at the end), so
-      // an oversized office file is skipped outright rather than read.
+      // an oversized office file is skipped outright rather than read —
+      // checked against `file.size` before ever touching `arrayBuffer()`.
       if (file.size > MAX_OFFICE_FILE_BYTES) {
         unreadable++;
         continue;
       }
-      let text: string | null;
+      let bytes: Uint8Array;
       try {
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        text = await extractOfficeText(bytes, officeKind(file));
+        bytes = new Uint8Array(await file.arrayBuffer());
       } catch {
-        text = null;
-      }
-      if (text === null) {
         unreadable++;
         continue;
       }
-      if (!text.trim()) continue;
-      findings.push(...evaluate(text, policy).findings);
+      const scanned = await scanBytes(file.name, bytes, policy, file.type);
+      if (scanned.unreadable) {
+        unreadable++;
+        continue;
+      }
+      findings.push(...scanned.findings);
       continue;
     }
 
-    let text: string;
+    // Text: sliced at the Blob level before reading, so an oversized file
+    // is never fully loaded into memory just to scan its first megabyte —
+    // partial coverage beats a trivial size-based bypass.
+    let bytes: Uint8Array;
     try {
-      // Oversized files are head-scanned rather than skipped: partial
-      // coverage beats a trivial size-based bypass.
       const blob = file.size > MAX_TEXT_FILE_BYTES ? file.slice(0, MAX_TEXT_FILE_BYTES) : file;
-      text = await blob.text();
+      bytes = new Uint8Array(await blob.arrayBuffer());
     } catch {
       unreadable++;
       continue;
     }
-    if (!text.trim()) continue;
-    findings.push(...evaluate(text, policy).findings);
+    const scanned = await scanBytes(file.name, bytes, policy, file.type);
+    if (scanned.unreadable) {
+      unreadable++;
+      continue;
+    }
+    findings.push(...scanned.findings);
   }
   // NOTE: unreadable-only scans stay silent under onError:"closed", which
   // today only governs whole-scan failures, not per-file read errors.

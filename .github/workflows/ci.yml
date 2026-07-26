@@ -27,25 +27,64 @@ jobs:
       - name: Build extension bundles
         run: npm run build:extension
 
+      # The gate below scans built output as well as source, so the CLI
+      # bundle has to exist by then. (npm test also builds it; this makes the
+      # dependency explicit rather than incidental.)
+      - name: Build CLI
+        run: npm run build:cli
+
       - name: No-egress gate
         run: |
           set -euo pipefail
 
-          PATTERN='fetch\(|XMLHttpRequest|sendBeacon|WebSocket\(|EventSource\(|import\(|new Image\(|connectNative'
+          # Browser egress APIs (apply everywhere: a Node CLI has no business
+          # calling any of these either) plus Node's own network built-ins,
+          # which only became reachable once apps/cli/src existed — see
+          # docs/ROADMAP.md §2.
+          NETWORK_PATTERN='fetch\(|XMLHttpRequest|sendBeacon|WebSocket\(|EventSource\(|import\(|new Image\(|connectNative|node:http|node:https|node:net|node:tls|node:dgram|node:dns'
+
+          # child_process (and its friends that shell out or reload modules
+          # at runtime) is banned everywhere EXCEPT the one reviewed carve-out
+          # below: apps/cli/src/mcp/gateway.ts spawns the real MCP server it
+          # proxies stdio for. No other file in any target may use it.
+          CHILD_PROCESS_PATTERN='child_process|execSync|spawnSync|createRequire'
+          CHILD_PROCESS_EXCEPTION="apps/cli/src/mcp/gateway.ts"
+
+          # Built output is scanned alongside source: the bundle is what
+          # actually runs, and a build step could in principle introduce a
+          # call that no source file contains.
           TARGETS=(
             "apps/extension/src"
             "packages/policy-engine/src"
+            "apps/cli/src"
+            "apps/cli/dist"
             "apps/extension/content.bundle.js"
             "apps/extension/background.js"
             "apps/extension/popup.js"
             "apps/extension/popup.html"
           )
 
-          echo "Scanning for network egress APIs: $PATTERN"
+          echo "Scanning for network egress APIs: $NETWORK_PATTERN"
           FOUND=0
           for t in "${TARGETS[@]}"; do
             if [ -e "$t" ]; then
-              if grep -rnE "$PATTERN" "$t"; then
+              # No file-level exceptions here — the reviewed spawn carve-out
+              # below is ONLY an exception to the child_process pattern,
+              # never to the network patterns, so gateway.ts is scanned the
+              # same as every other file for this pass.
+              #
+              # Documentation that has to name a banned API must carry the
+              # explicit marker below on the same line. Filtering on comment
+              # SYNTAX instead would be bypassable: inside a multi-line
+              # template literal, a line beginning with `*` or `//` is still
+              # executable code if it contains a `${...}` interpolation, so a
+              # real call could hide on a line the filter treats as a comment.
+              # An opt-in marker cannot be tripped by accident, and every use
+              # of it is greppable in review.
+              DOC_MARKER='no-egress-doc'
+              MATCHES="$(grep -rnE "$NETWORK_PATTERN" "$t" | grep -v "$DOC_MARKER" || true)"
+              if [ -n "$MATCHES" ]; then
+                echo "$MATCHES"
                 FOUND=1
               fi
             else
@@ -54,9 +93,34 @@ jobs:
             fi
           done
 
+          echo "Scanning for child_process usage (reviewed carve-out: $CHILD_PROCESS_EXCEPTION): $CHILD_PROCESS_PATTERN"
+          for t in "${TARGETS[@]}"; do
+            if [ ! -e "$t" ]; then
+              continue # already reported as missing above
+            fi
+            if [ -f "$t" ]; then
+              if [ "$t" = "$CHILD_PROCESS_EXCEPTION" ]; then
+                continue
+              fi
+              if grep -nE "$CHILD_PROCESS_PATTERN" "$t"; then
+                FOUND=1
+              fi
+            else
+              # Directory target: grep recursively, then drop any match that
+              # came from the one excepted file — every other file under the
+              # directory (including every other file in apps/cli/src) is
+              # still fully checked.
+              MATCHES="$(grep -rnE "$CHILD_PROCESS_PATTERN" "$t" | grep -v "^${CHILD_PROCESS_EXCEPTION}:" || true)"
+              if [ -n "$MATCHES" ]; then
+                echo "$MATCHES"
+                FOUND=1
+              fi
+            fi
+          done
+
           if [ "$FOUND" -eq 1 ]; then
-            echo "::error::NO-EGRESS GATE FAILED: network API usage found (or a scan target is missing) above."
+            echo "::error::NO-EGRESS GATE FAILED: network API usage, or child_process usage outside the one reviewed carve-out, found (or a scan target is missing) above."
             exit 1
           fi
 
-          echo "No-egress gate passed: no fetch/XHR/sendBeacon/WebSocket/EventSource/dynamic-import/Image-beacon/connectNative found."
+          echo "No-egress gate passed: no fetch/XHR/sendBeacon/WebSocket/EventSource/dynamic-import/Image-beacon/connectNative/node:net-family calls found, and no child_process usage outside the reviewed MCP gateway spawn."

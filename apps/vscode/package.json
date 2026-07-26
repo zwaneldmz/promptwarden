@@ -1,0 +1,53 @@
+{
+  "name": "promptwarden-vscode",
+  "displayName": "PromptWarden",
+  "description": "Local, deterministic diagnostics for sensitive data (credit cards, IBANs, API keys, bulk PII) in open files — editor-side detection only, using the same policy engine as the browser extension and CLI. Cannot see or gate IDE inline-completion suggestions (Copilot, Cursor Tab, JetBrains AI) or the AI chat panel — that payload is assembled inside a closed process. See docs/IDE.md.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "promptwarden",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=22"
+  },
+  "categories": ["Other", "Linters"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "promptwarden.scanActiveFile",
+        "title": "PromptWarden: Scan Active File"
+      },
+      {
+        "command": "promptwarden.scanWorkspaceSelection",
+        "title": "PromptWarden: Scan Workspace Selection"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "promptwarden.scanWorkspaceSelection",
+          "group": "promptwarden"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "PromptWarden",
+      "properties": {
+        "promptwarden.policyPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to a policy JSON file (validated with the same `parsePolicy` the CLI and browser extension use). Relative paths resolve against the first workspace folder. Empty uses the built-in default policy (`vscode-standalone-default`, the same profile as `promptwarden`'s CLI default). There is no managed-storage or `/etc` discovery here — set this explicitly, or use a VS Code Settings Sync / workspace `.vscode/settings.json` entry to distribute it."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0"
+  }
+}

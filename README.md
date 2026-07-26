@@ -14,8 +14,9 @@ records that provably contain no prompt content.
 
 ```
 packages/policy-engine   Dependency-free TS library: policy schema, detectors
-                         (Luhn, IBAN mod-97, AT SVNR check digit, API keys),
-                         evaluation, privacy-gated logging. 20 tests.
+                         (Luhn + issuer-prefix credit card, IBAN mod-97, AT
+                         SVNR check digit, API keys, bulk_pii), evaluation,
+                         privacy-gated logging. Tested (`npm test`).
 apps/extension           Manifest V3 extension: selector-less interception,
                          guardrail UI, managed-storage policy support.
 profiles/                Example org profiles (healthcare, accounting).

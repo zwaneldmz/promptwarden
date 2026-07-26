@@ -1,0 +1,107 @@
+name: Site smoke (weekly)
+
+# Weekly host-matrix regression against real, public AI chat sites (see
+# docs/NEXT_PLAN.md W3: "Weekly Playwright smoke across 7 hosts (local CI,
+# no egress)"). This workflow runs the browser locally on the runner against
+# public sites over the runner's normal outbound HTTPS — it does not touch
+# the extension's own no-egress guarantee, which is about the *extension*
+# never calling a network API (see .github/workflows/ci.yml's no-egress
+# gate). Those are two different things; this job existing does not weaken
+# that one.
+#
+# HONEST CAVEAT: this job hits chatgpt.com, chat.openai.com, claude.ai,
+# gemini.google.com, copilot.microsoft.com, chat.mistral.ai, and
+# www.perplexity.ai from a GitHub-hosted runner IP with no login session.
+# Several of these sites bot-wall or login-wall anonymous/datacenter
+# traffic. tools/e2e-smoke.mjs --all treats "no editor found" as SKIP, not
+# FAIL, specifically to absorb that — but a SKIP-heavy run is not proof the
+# guardrail works on those hosts, only that it wasn't disproven. Treat a
+# green run here as best-effort signal, not a validated-on-every-host
+# guarantee, until confirmed against a real (logged-in / managed) profile.
+# Read the job log's PASS/FAIL/SKIP summary table before trusting the
+# green checkmark.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build engine + extension bundles
+        run: |
+          npm run build:engine
+          npm run build:extension
+
+      - name: Install xvfb (for headed Chrome on a headless runner)
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Resolve runner's preinstalled Chrome
+        id: chrome
+        run: |
+          set -euo pipefail
+          # ubuntu-latest ships Chrome stable preinstalled, but the exact
+          # binary name has moved across runner image versions
+          # (google-chrome-stable vs google-chrome symlink) — resolve it
+          # instead of hardcoding /usr/bin/google-chrome so this doesn't
+          # silently break on a runner image bump.
+          for candidate in google-chrome-stable google-chrome chromium-browser chromium; do
+            if command -v "$candidate" >/dev/null 2>&1; then
+              echo "path=$(command -v "$candidate")" >> "$GITHUB_OUTPUT"
+              echo "Resolved Chrome: $(command -v "$candidate")"
+              exit 0
+            fi
+          done
+          echo "::error::no preinstalled Chrome/Chromium found on this runner"
+          exit 1
+
+      - name: Weekly host-matrix smoke (--all)
+        id: smoke
+        continue-on-error: false
+        env:
+          PW_BROWSER: ${{ steps.chrome.outputs.path }}
+        run: xvfb-run --auto-servernum node tools/e2e-smoke.mjs --all
+
+      - name: Open issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const date = new Date().toISOString().slice(0, 10);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Site smoke failure ${date}`,
+              body: [
+                `Weekly site smoke (\`node tools/e2e-smoke.mjs --all\`) failed on ${date}.`,
+                ``,
+                `Run: ${runUrl}`,
+                ``,
+                `A FAIL (not a SKIP) means the guardrail did not behave as expected on a host`,
+                `where an editor *was* found — that is a genuine regression candidate, not a`,
+                `bot-wall/login-wall condition (those are logged SKIP and do not fail the job).`,
+                `Read the job log's PASS/FAIL/SKIP summary table before triaging further.`,
+                ``,
+                `Reminder (see workflow file header): this job runs against real, public AI`,
+                `chat sites from a GitHub-hosted runner with no login session, so results are`,
+                `best-effort — a FAIL here is a strong signal, but confirm against a real`,
+                `install before treating it as fully validated.`,
+              ].join("\n"),
+            });

@@ -1,4 +1,11 @@
 (async () => {
+  // Placeholder repo path — promptwarden/promptwarden is not a public
+  // GitHub org/repo yet (docs/NEXT_PLAN.md W1: "Repo public" is still
+  // pending as of this change). Update this constant once the real
+  // GitHub org/repo is live; nothing else about the report-link code
+  // needs to change.
+  const ISSUE_REPO_URL = "https://github.com/promptwarden/promptwarden";
+
   const ACTION_PRIORITY = { block: 3, redact: 2, warn: 1 };
 
   function escapeHtml(s) {
@@ -115,6 +122,103 @@
     return Array.isArray(local["pw-events"]) ? local["pw-events"] : [];
   }
 
+  // Mirrors apps/extension/src/background.ts's isValidHttpsMatchPattern.
+  // popup.js is loaded directly by popup.html (unbundled — see
+  // package.json's build:extension, which only bundles content.ts and
+  // background.ts), so there's no shared module to import this from without
+  // adding a build step. Keep the two in sync by hand if the grammar ever
+  // changes.
+  function isValidHttpsMatchPattern(pattern) {
+    if (typeof pattern !== "string") return false;
+    const m = /^https:\/\/([^/]+)(\/.*)$/.exec(pattern);
+    if (!m) return false;
+    const host = m[1];
+    if (host.length === 0) return false;
+    if (host === "*") return false; // bare wildcard rejected — mirror background.ts
+    if (host.startsWith("*.")) {
+      const rest = host.slice(2);
+      return rest.length > 0 && !rest.includes("*");
+    }
+    return !host.includes("*");
+  }
+
+  // Declared extraHosts, filtered to well-formed https patterns. Reads
+  // managed storage directly (not via background.ts) because this only
+  // needs to know what to *ask permission for* / *check permission
+  // against* — it never registers anything itself.
+  async function loadExtraHosts() {
+    try {
+      const managed = await chrome.storage.managed.get(["extraHosts"]);
+      const raw = managed.extraHosts;
+      if (!Array.isArray(raw)) return [];
+      return raw.filter(isValidHttpsMatchPattern);
+    } catch {
+      return []; // managed storage unavailable outside enterprise deployments
+    }
+  }
+
+  /**
+   * Show the "extended coverage" notice + button only when the admin has
+   * declared extraHosts AND the permission grant for them is missing.
+   * Nothing renders for the common standalone case (no managed extraHosts
+   * at all) or once the grant already covers every declared host.
+   */
+  async function refreshExtraHostsNotice() {
+    const notice = document.getElementById("extra-hosts-notice");
+    const extraHosts = await loadExtraHosts();
+    if (extraHosts.length === 0) {
+      notice.hidden = true;
+      return;
+    }
+    let granted = false;
+    try {
+      granted = await chrome.permissions.contains({ permissions: ["scripting"], origins: extraHosts });
+    } catch {
+      granted = false;
+    }
+    notice.hidden = granted;
+  }
+
+  // Category-level counts only — kind -> occurrence count. Never the raw
+  // diagnostic entries (which carry a `host`), and never anything from
+  // pw-events (which can carry per-event categories/actions but is a
+  // different buffer entirely and is not touched here).
+  function summarizeDiagnostics(diagnostics) {
+    const counts = {};
+    for (const d of diagnostics) {
+      const kind = d && typeof d === "object" && typeof d.kind === "string" ? d.kind : "unknown";
+      counts[kind] = (counts[kind] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /**
+   * Build the prefilled GitHub issue URL for "Problem melden". Query params
+   * carry ONLY the extension version, the browser UA, and a category-level
+   * diagnostics summary (counts per pw-diagnostics `kind`) — never event
+   * data, never hostnames from pw-events or pw-diagnostics. The user still
+   * has to review and click "Submit new issue" on GitHub themselves; this
+   * only opens the compose form pre-filled.
+   */
+  async function buildReportUrl() {
+    const local = await chrome.storage.local.get(["pw-diagnostics"]);
+    const diagnostics = Array.isArray(local["pw-diagnostics"]) ? local["pw-diagnostics"] : [];
+    const counts = summarizeDiagnostics(diagnostics);
+    const version = chrome.runtime.getManifest().version;
+    const summaryLines = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([kind, n]) => `- ${kind}: ${n}`);
+    const body = [
+      `Extension version: ${version}`,
+      `Browser: ${navigator.userAgent}`,
+      "",
+      "Diagnostics summary (category counts only, no event data, no hostnames):",
+      summaryLines.length > 0 ? summaryLines.join("\n") : "(none recorded)",
+    ].join("\n");
+    const params = new URLSearchParams({ title: `PromptWarden issue (v${version})`, body });
+    return `${ISSUE_REPO_URL}/issues/new?${params.toString()}`;
+  }
+
   function renderPolicy({ managed, policy }) {
     document.getElementById("policy-name").textContent = policy?.name ?? "standalone-default";
     document.getElementById("rule-count").textContent = Array.isArray(policy?.rules) ? policy.rules.length : 0;
@@ -193,5 +297,31 @@
     downloadJson(`pw-aggregate-${aggregate.generatedDay}.json`, aggregate);
   });
 
-  await refresh();
+  document.getElementById("enable-extra-hosts").addEventListener("click", async () => {
+    // chrome.permissions.request requires an active user gesture — this
+    // click handler is that gesture. Never called from background.ts or on
+    // popup load.
+    const extraHosts = await loadExtraHosts();
+    if (extraHosts.length === 0) return;
+    let granted = false;
+    try {
+      granted = await chrome.permissions.request({ permissions: ["scripting"], origins: extraHosts });
+    } catch {
+      granted = false; // e.g. the user dismissed Chrome's native prompt
+    }
+    if (granted) {
+      try {
+        // Ask background.ts to reconcile immediately rather than waiting for
+        // its own chrome.permissions.onAdded listener to fire.
+        await chrome.runtime.sendMessage({ type: "sync-extra-hosts" });
+      } catch {
+        /* background re-syncs on its own via onAdded regardless */
+      }
+    }
+    await refreshExtraHostsNotice();
+  });
+
+  await Promise.all([refresh(), refreshExtraHostsNotice()]);
+  const reportLink = document.getElementById("report-problem");
+  reportLink.href = await buildReportUrl();
 })();

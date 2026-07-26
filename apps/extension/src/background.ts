@@ -8,19 +8,42 @@
  * Event records arrive already privacy-filtered by the policy engine's
  * `toLogRecord` (see packages/policy-engine/src/engine.ts) — this file must
  * never add fields to them, only buffer, age out, and cap what it's given.
+ *
+ * Also owns dynamic host coverage (docs/HOST_COVERAGE.md): reconciling the
+ * admin's managed-storage `extraHosts` declaration and Chrome's actually
+ * granted optional permissions into a single dynamically registered content
+ * script. This never requests a permission itself (that requires a user
+ * gesture and lives in popup.js) — it only registers scripts for origins
+ * Chrome already confirms are granted.
  */
 
 type Message =
   | { type: "get-policy" }
   | { type: "event"; record: Record<string, unknown> }
   | { type: "pw-event"; record: Record<string, unknown> }
-  | { type: "diagnostic"; kind: string; host: string };
+  | { type: "diagnostic"; kind: string; host: string }
+  | { type: "sync-extra-hosts" };
 
 const EVENT_BUFFER_KEY = "pw-events";
 const DIAGNOSTIC_BUFFER_KEY = "pw-diagnostics";
 const MAX_BUFFERED = 500;
 const DEFAULT_RETENTION_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Registration id for the extraHosts dynamic content script. Stable across
+ * reconciliation calls so re-registering under the same id is idempotent. */
+const EXTRA_HOSTS_SCRIPT_ID = "pw-extra";
+/** Same bundle the manifest's static entry injects — extraHosts get the
+ * identical, host-agnostic content script, never a different one. */
+const CONTENT_SCRIPT_FILE = "content.bundle.js";
+
+/**
+ * Closed set of reason codes background.ts can append to the shared
+ * pw-diagnostics buffer. Kept as a literal union (rather than a free string)
+ * so a future new failure mode has to be named here deliberately, matching
+ * the pattern content.ts uses for its own `DiagnosticKind`.
+ */
+type BackgroundDiagnosticKind = "extra-hosts-error";
 
 async function resolvePolicy(): Promise<unknown | null> {
   try {
@@ -116,6 +139,203 @@ function enqueueStartupPrune(): void {
 }
 enqueueStartupPrune();
 
+/**
+ * Append a diagnostic entry through the same serialized write queue as every
+ * other buffer write. `host` defaults to "background" for failures that
+ * originate here rather than in a content script's page context — the
+ * buffer's stored shape is unchanged (`{ kind, host, ts }`), this just gives
+ * background-origin entries an identifiable, non-empty host value.
+ */
+function recordDiagnostic(kind: string, host: string = "background"): void {
+  enqueueAppend(DIAGNOSTIC_BUFFER_KEY, { kind, host, ts: new Date().toISOString() }, MAX_BUFFERED);
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic host coverage (docs/HOST_COVERAGE.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * True if `pattern` is a well-formed *https-only* match pattern
+ * ("https://<host><path>"). Deliberately rejects `<all_urls>`, `http:`, and
+ * every other scheme — `extraHosts` is admin-controlled input read out of
+ * managed storage, so it's validated with the same distrust as any other
+ * externally supplied string before it's ever handed to
+ * chrome.permissions.contains/chrome.scripting.
+ *
+ * Grammar (subset of https://developer.chrome.com/docs/extensions/mv3/match_patterns/):
+ * host is "*.<label>..." or a literal hostname — never empty, never a bare
+ * "*" (a single extraHosts entry must not mean "every https origin"; the
+ * whole point of the list is a narrow, named, auditable coverage extension),
+ * and never containing "*" anywhere but that single leading wildcard label.
+ */
+function isValidHttpsMatchPattern(pattern: unknown): pattern is string {
+  if (typeof pattern !== "string") return false;
+  const m = /^https:\/\/([^/]+)(\/.*)$/.exec(pattern);
+  if (!m) return false;
+  const host = m[1];
+  if (host.length === 0) return false;
+  if (host === "*") return false; // bare wildcard: every https origin — rejected
+  if (host.startsWith("*.")) {
+    const rest = host.slice(2);
+    return rest.length > 0 && !rest.includes("*");
+  }
+  return !host.includes("*");
+}
+
+/**
+ * Read the admin's declared `extraHosts` out of managed storage, validated
+ * to well-formed https match patterns. Missing/malformed/non-array/absent
+ * managed storage all resolve to "no extra hosts" — matching the existing
+ * fail-closed-to-default posture `resolvePolicy()` already uses for the
+ * sibling `policy` field.
+ */
+async function readManagedExtraHosts(): Promise<string[]> {
+  try {
+    const managed = await chrome.storage.managed.get(["extraHosts"]);
+    const raw = (managed as { extraHosts?: unknown }).extraHosts;
+    if (!Array.isArray(raw)) return [];
+    return [...new Set(raw.filter(isValidHttpsMatchPattern))];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Whether the extension currently holds the "scripting" API permission
+ * itself (declared in `optional_permissions`, granted only via a user
+ * gesture in the popup or a fleet-wide `ExtensionSettings` push — never
+ * requested from here). `chrome.permissions.contains` never throws for
+ * asking about a permission the caller doesn't hold, but it's wrapped anyway
+ * per this file's "never throw" contract.
+ */
+async function hasScriptingPermission(): Promise<boolean> {
+  try {
+    return await chrome.permissions.contains({ permissions: ["scripting"] });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Filter `patterns` down to the subset Chrome confirms is already granted as
+ * a host permission. Checked one pattern at a time (a batched
+ * `contains({ origins: patterns })` call only answers "are all of these
+ * granted?", not which ones) — this is what makes declaring 40 hosts and
+ * granting 3 of them independently safe: the other 37 simply never make it
+ * into the registered script's `matches`.
+ */
+async function filterGrantedOrigins(patterns: string[]): Promise<string[]> {
+  const granted: string[] = [];
+  for (const pattern of patterns) {
+    try {
+      if (await chrome.permissions.contains({ origins: [pattern] })) {
+        granted.push(pattern);
+      }
+    } catch {
+      // Treat a rejected contains() check as "not granted" — never throw.
+    }
+  }
+  return granted;
+}
+
+function sameOriginSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((v, i) => v === sortedB[i]);
+}
+
+/**
+ * Reconcile the single `pw-extra` dynamic content script registration
+ * against `matches` (the currently granted, declared extraHosts). Reads the
+ * existing registration first so this is idempotent to call repeatedly:
+ * unchanged match sets are a no-op, a changed set goes through
+ * `updateContentScripts` (not blind unregister-then-register), an empty set
+ * unregisters, and a first-time non-empty set creates.
+ */
+async function reconcileRegisteredScript(matches: string[]): Promise<void> {
+  const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [EXTRA_HOSTS_SCRIPT_ID] });
+  const current = existing[0];
+
+  if (matches.length === 0) {
+    if (current) {
+      await chrome.scripting.unregisterContentScripts({ ids: [EXTRA_HOSTS_SCRIPT_ID] });
+    }
+    return;
+  }
+
+  const sorted = [...matches].sort();
+  if (current?.matches && sameOriginSet(current.matches, sorted)) {
+    return; // already in sync
+  }
+
+  // Mirrors the static manifest entry's run_at/all_frames exactly, so
+  // behavior on an extraHosts origin matches behavior on a default host.
+  const definition: chrome.scripting.RegisteredContentScript = {
+    id: EXTRA_HOSTS_SCRIPT_ID,
+    matches: sorted,
+    js: [CONTENT_SCRIPT_FILE],
+    runAt: "document_start",
+    allFrames: true,
+    persistAcrossSessions: true,
+  };
+
+  if (current) {
+    await chrome.scripting.updateContentScripts([definition]);
+  } else {
+    await chrome.scripting.registerContentScripts([definition]);
+  }
+}
+
+/**
+ * Reconciles dynamically-registered content scripts against the admin's
+ * `extraHosts` policy field and the host permissions Chrome has actually
+ * granted. Safe to call repeatedly — see call sites below (service-worker
+ * startup, managed-storage change, permission grant/revoke, popup re-sync
+ * request).
+ *
+ * Never throws: every step is either individually guarded or covered by the
+ * outer try/catch, and any failure lands in pw-diagnostics as the single
+ * closed-set "extra-hosts-error" reason code rather than surfacing to the
+ * caller or crashing the service worker.
+ */
+async function syncExtraHostCoverage(): Promise<void> {
+  try {
+    const scriptingGranted = await hasScriptingPermission();
+    if (!scriptingGranted) {
+      // Without the "scripting" API permission itself, nothing could have
+      // been registered through this API in the first place (registration
+      // requires it too), and Chrome won't honor a stale registration
+      // without it either — nothing to reconcile.
+      return;
+    }
+    const declared = await readManagedExtraHosts();
+    const grantedOrigins = await filterGrantedOrigins(declared);
+    await reconcileRegisteredScript(grantedOrigins);
+  } catch (err) {
+    const kind: BackgroundDiagnosticKind = "extra-hosts-error";
+    recordDiagnostic(kind);
+    console.warn("promptwarden: extra-hosts sync failed", err);
+  }
+}
+
+// Trigger points (docs/HOST_COVERAGE.md "Registration flow"):
+// service-worker startup (direct call, mirroring enqueueStartupPrune()
+// above — a service worker can wake for reasons other than onInstalled/
+// onStartup firing), managed-storage changes to extraHosts, and permission
+// grant/revoke (covers both the popup's user-gesture grant and a fleet-wide
+// ExtensionSettings push, which lands here without ever touching the popup).
+syncExtraHostCoverage();
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "managed" && "extraHosts" in changes) {
+    syncExtraHostCoverage();
+  }
+});
+
+chrome.permissions.onAdded.addListener(() => syncExtraHostCoverage());
+chrome.permissions.onRemoved.addListener(() => syncExtraHostCoverage());
+
 chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
   if (msg.type === "get-policy") {
     resolvePolicy().then((policy) => sendResponse({ policy }));
@@ -129,12 +349,16 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
     return false;
   }
   if (msg.type === "diagnostic") {
-    enqueueAppend(
-      DIAGNOSTIC_BUFFER_KEY,
-      { kind: msg.kind, host: msg.host, ts: new Date().toISOString() },
-      MAX_BUFFERED,
-    );
+    recordDiagnostic(msg.kind, msg.host);
     return false;
+  }
+  if (msg.type === "sync-extra-hosts") {
+    // Sent by popup.js right after chrome.permissions.request resolves
+    // truthy — re-syncs immediately instead of waiting for the
+    // chrome.permissions.onAdded listener above (belt-and-suspenders; both
+    // paths converge on the same idempotent syncExtraHostCoverage()).
+    syncExtraHostCoverage().then(() => sendResponse({ ok: true }));
+    return true; // async response
   }
   return false;
 });

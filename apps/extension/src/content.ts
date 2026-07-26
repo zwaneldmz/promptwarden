@@ -152,6 +152,13 @@ function onSubmitAttempt(e: Event, editable: HTMLElement, trigger: SubmitTrigger
   const result = evaluate(text, policy);
   if (result.findings.length === 0) return;
 
+  // Observe-only result (Exposure Check mode): the policy wants a record,
+  // not an interruption — log and let the send proceed untouched.
+  if (!result.blocked && !result.needsWarning && result.redactedText === text) {
+    log(result);
+    return;
+  }
+
   e.preventDefault();
   e.stopImmediatePropagation();
   log(result);
@@ -305,6 +312,12 @@ document.addEventListener(
     const result = evaluate(pasted, policy);
     if (result.findings.length === 0) return;
 
+    // Observe-only result: record it, let the paste land untouched.
+    if (!result.blocked && !result.needsWarning && result.redactedText === pasted) {
+      log(result);
+      return;
+    }
+
     // Take over the insertion so a redacted version can be substituted before
     // the text ever reaches the page's editor state.
     e.preventDefault();
@@ -383,6 +396,11 @@ function onFileInputEvent(e: Event) {
           return;
         }
         log(scan.result);
+        // Observe-only scan: recorded above, upload proceeds untouched.
+        if (!scan.blocked && !scan.needsWarning) {
+          releaseFileInput(input);
+          return;
+        }
         if (scan.blocked) {
           clearFileInput(input);
           showGuardrail({
@@ -447,6 +465,11 @@ document.addEventListener(
           return;
         }
         log(scan.result);
+        // Observe-only scan: recorded above, drop proceeds untouched.
+        if (!scan.blocked && !scan.needsWarning) {
+          replayDrop(target, files);
+          return;
+        }
         if (scan.blocked) {
           showGuardrail({
             title: "This file can't be uploaded",

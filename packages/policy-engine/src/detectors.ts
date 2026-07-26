@@ -35,6 +35,14 @@ function luhnValid(digits: string): boolean {
 
 const CARD_CANDIDATE = /\b(?:\d[ -]?){13,19}\b/g;
 
+// Issuer/BIN prefix gating: a long numeric string that happens to pass Luhn
+// (order numbers, tracking numbers, EAN-13 barcodes all can) is only treated
+// as a card if its leading digits also match a real issuer range — Visa (4),
+// Mastercard (51–55, and the newer 2221–2720 range approximated here as
+// 22–27), Amex (34, 37), Discover (6011). Luhn alone is not enough; the
+// guardrail UX dies the day it cries wolf on an order number.
+const ISSUER_PREFIX = /^(?:4|5[1-5]|2[2-7]|3[47]|6011)/;
+
 const creditCard: DetectorFn = (text) => {
   const out: RawMatch[] = [];
   for (const m of text.matchAll(CARD_CANDIDATE)) {
@@ -42,9 +50,7 @@ const creditCard: DetectorFn = (text) => {
     const digits = raw.replace(/[ -]/g, "");
     if (digits.length < 13 || digits.length > 19) continue;
     if (!luhnValid(digits)) continue;
-    // Common false positive: long numeric IDs that accidentally pass Luhn but
-    // don't start with a known major industry identifier (3–6).
-    if (!/^[3-6]/.test(digits)) continue;
+    if (!ISSUER_PREFIX.test(digits)) continue;
     out.push({ detector: "credit_card", start: m.index!, end: m.index! + raw.length, match: raw });
   }
   return out;
@@ -115,8 +121,13 @@ const email: DetectorFn = (text) => {
 
 /* ---------------------------------- phone -------------------------------- */
 
-// International or common European formats with at least 9 digits.
-const PHONE = /(?:\+|00)[1-9]\d{0,2}[ \-/]?(?:\(?\d{1,4}\)?[ \-/]?)?\d(?:[ \-/]?\d){6,10}\b/g;
+// International or common European formats with at least 9 digits. The
+// leading `(?<!\d)` guards against matching a "00" that merely occurs
+// mid-run inside a longer, unrelated digit string (order numbers, tracking
+// numbers): without it, "00" preceded by another digit is a false trigger
+// for the international-dialing prefix even though nothing there was ever a
+// phone number — found via the false-positive corpus in edge-cases.test.ts.
+const PHONE = /(?<!\d)(?:\+|00)[1-9]\d{0,2}[ \-/]?(?:\(?\d{1,4}\)?[ \-/]?)?\d(?:[ \-/]?\d){6,10}\b/g;
 
 const phone: DetectorFn = (text) => {
   const out: RawMatch[] = [];
@@ -181,6 +192,12 @@ const atSvnr: DetectorFn = (text) => {
 
 /* -------------------------------- registry ------------------------------- */
 
+// Note: "bulk_pii" is deliberately not registered here. It isn't a per-text
+// pattern detector — it's a post-pass synthesized by evaluate() once the
+// detectors above have run (see engine.ts), because it needs their combined
+// findings ("N+ distinct PII strings in one payload") rather than a pattern
+// match of its own. Its label still lives in DEFAULT_LABELS below so it gets
+// the same rule/label-resolution treatment as any other detector id.
 export const BUILTIN_DETECTORS: Record<string, DetectorFn> = {
   credit_card: creditCard,
   iban,
@@ -197,4 +214,5 @@ export const DEFAULT_LABELS: Record<string, string> = {
   phone: "[REDACTED:PHONE]",
   api_key: "[REDACTED:API_KEY]",
   at_svnr: "[REDACTED:SVNR]",
+  bulk_pii: "[REDACTED:BULK_PII]",
 };

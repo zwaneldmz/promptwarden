@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "Pilot — Enforce (week 7+)",
+  "hosts": [
+    "chatgpt.com",
+    "chat.openai.com",
+    "claude.ai",
+    "gemini.google.com",
+    "copilot.microsoft.com",
+    "chat.mistral.ai",
+    "www.perplexity.ai"
+  ],
+  "defaultAction": "block",
+  "logging": "event",
+  "onError": "closed",
+  "retentionDays": 90,
+  "bulkPiiThreshold": 5,
+  "rules": [
+    { "detector": "credit_card", "action": "block" },
+    { "detector": "api_key", "action": "block" },
+    { "detector": "bulk_pii", "action": "block" },
+    { "detector": "iban", "action": "redact" },
+    { "detector": "at_svnr", "action": "redact" },
+    { "detector": "email", "action": "allow" },
+    { "detector": "phone", "action": "allow" }
+  ]
+}

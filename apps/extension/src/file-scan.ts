@@ -147,11 +147,16 @@ export async function scanFiles(files: File[], policy: Policy): Promise<FileScan
   if (findings.length === 0) return null;
 
   const blocked = findings.some((f) => f.action === "block");
+  // Observe-actioned findings are recorded but never interrupt; only
+  // warn/redact-actioned ones warrant the dialog (redact surfaces as warn
+  // for files since file content can't be rewritten).
+  const needsWarning =
+    !blocked && findings.some((f) => f.action === "warn" || f.action === "redact");
   return {
-    result: { findings, redactedText: "", blocked, needsWarning: !blocked },
+    result: { findings, redactedText: "", blocked, needsWarning },
     categories: [...new Set(findings.map((f) => f.detector))],
     blocked,
-    needsWarning: !blocked,
+    needsWarning,
     unreadable,
   };
 }

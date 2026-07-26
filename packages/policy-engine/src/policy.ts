@@ -9,6 +9,7 @@
 /** What the engine should do when a detector fires. */
 export type Action =
   | "allow" // record nothing, let it through
+  | "observe" // record the finding, never interrupt — the Exposure Check mode
   | "warn" // let the user decide; show what was found
   | "redact" // replace the finding with a placeholder before send
   | "block"; // prevent submission entirely
@@ -20,7 +21,8 @@ export type DetectorId =
   | "email"
   | "phone"
   | "api_key"
-  | "at_svnr"; // Austrian social insurance number
+  | "at_svnr" // Austrian social insurance number
+  | "bulk_pii"; // synthetic post-pass, see engine.ts evaluate()
 
 export interface DetectorRule {
   detector: DetectorId | string; // string allows custom regex rules
@@ -59,6 +61,13 @@ export interface Policy {
    * (Art. 5(1)(e) storage limitation). Default 90.
    */
   retentionDays?: number;
+  /**
+   * Minimum count of DISTINCT matched strings across the email/iban/
+   * credit_card/phone/at_svnr detectors (in one evaluated text) before the
+   * synthetic "bulk_pii" finding fires — "someone pasted our whole customer
+   * list." Positive integer. Default 5.
+   */
+  bulkPiiThreshold?: number;
 }
 
 export interface Finding {
@@ -82,7 +91,7 @@ export interface EvaluationResult {
   needsWarning: boolean;
 }
 
-const ACTIONS: Action[] = ["allow", "warn", "redact", "block"];
+const ACTIONS: Action[] = ["allow", "observe", "warn", "redact", "block"];
 const LOGGING: LoggingMode[] = ["off", "event", "content"];
 
 /** Validate an untrusted policy document. Throws with a readable message. */
@@ -112,6 +121,14 @@ export function parsePolicy(input: unknown): Policy {
     (typeof p.retentionDays !== "number" || !Number.isFinite(p.retentionDays) || p.retentionDays <= 0)
   ) {
     throw new Error("retentionDays must be a positive number");
+  }
+  if (
+    p.bulkPiiThreshold !== undefined &&
+    (typeof p.bulkPiiThreshold !== "number" ||
+      !Number.isInteger(p.bulkPiiThreshold) ||
+      p.bulkPiiThreshold <= 0)
+  ) {
+    throw new Error("bulkPiiThreshold must be a positive integer");
   }
   if (!Array.isArray(p.rules)) throw new Error("Policy rules must be an array");
   for (const r of p.rules as Array<Record<string, unknown>>) {

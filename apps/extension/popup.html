@@ -37,13 +37,21 @@
   .ev-action.warn { background: #2a2416; color: #d7bd7f; }
   .ev-action.redact { background: #142430; color: #9fd0ff; }
   .empty { color: #7f8a95; font-style: italic; padding: 8px 0; }
-  button#clear-events, button#export-aggregate { margin-top: 8px; width: 100%; padding: 6px 0;
+  button#clear-events, button#export-aggregate, button#enable-extra-hosts {
+        margin-top: 8px; width: 100%; padding: 6px 0;
         border-radius: 5px; border: 1px solid #2a323b; background: #171d24; color: #e8edf2;
         font: inherit; cursor: pointer; }
-  button#clear-events:hover, button#export-aggregate:hover { background: #1d242c; }
+  button#clear-events:hover, button#export-aggregate:hover, button#enable-extra-hosts:hover { background: #1d242c; }
   button#export-aggregate { margin-top: 12px; border-color: #2c4a72; color: #9fd0ff; }
   button#export-aggregate[hidden] { display: none; }
   p.hint { color: #7f8a95; font-size: 11px; margin: 6px 0 0; }
+  #extra-hosts-notice { margin-top: 10px; padding: 8px; border-radius: 6px;
+        background: #2a2416; border: 1px solid #4a3f22; }
+  #extra-hosts-notice[hidden] { display: none; }
+  #extra-hosts-notice p { margin: 0 0 6px; color: #d7bd7f; font-size: 12px; }
+  button#enable-extra-hosts { margin-top: 0; border-color: #4a3f22; color: #d7bd7f; }
+  #report-problem-row { margin-top: 12px; }
+  #report-problem { color: #7f8a95; font-size: 11px; }
 </style>
 </head>
 <body>
@@ -55,6 +63,11 @@
   <div class="row"><span>Rules</span><span class="val" id="rule-count">0</span></div>
   <div class="row"><span>Hosts</span><span class="val" id="host-count">0</span></div>
   <span class="badge unmanaged" id="mode">Standalone</span>
+
+  <div id="extra-hosts-notice" hidden>
+    <p>Your organization added extra sites to scan, but hasn't granted access yet.</p>
+    <button id="enable-extra-hosts" type="button">Enable extended coverage</button>
+  </div>
 
   <h2>Events on device</h2>
   <div class="counts">
@@ -69,6 +82,10 @@
   <button id="clear-events" type="button">Clear events</button>
   <button id="export-aggregate" type="button" hidden>Export aggregate report</button>
   <p class="hint">Exports day-level counts only — no per-event rows, no device ID, no content.</p>
+
+  <p id="report-problem-row">
+    <a id="report-problem" href="#" target="_blank" rel="noopener noreferrer">Problem melden</a>
+  </p>
 
   <script src="popup.js"></script>
 </body>

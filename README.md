@@ -3,6 +3,8 @@
 Open-source guardrails for AI chat. Warns, redacts, or blocks sensitive customer
 data (IBANs, card numbers, social insurance numbers, API keys, org-specific IDs)
 before it leaves the browser for ChatGPT, Claude, Gemini, Copilot, and others.
+File uploads are scanned too, including text files and Office Open XML
+attachments (.xlsx, .docx), all locally and without a network call.
 
 Built browser-first for SMBs and the MSPs who serve them. Privacy-preserving by
 default: standalone mode logs nothing; managed mode defaults to event-level

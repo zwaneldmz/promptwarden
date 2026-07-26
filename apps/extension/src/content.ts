@@ -17,7 +17,7 @@
  */
 import { evaluate, parsePolicy, hostMatches, Policy, EvaluationResult, toLogRecord } from "@promptwarden/policy-engine";
 import { FALLBACK_POLICY } from "./default-policy.js";
-import { isTextLikeFile, scanFiles } from "./file-scan.js";
+import { isScannableFile, scanFiles } from "./file-scan.js";
 import {
   SavedSelection,
   activeEditable,
@@ -346,10 +346,11 @@ document.addEventListener(
 /* ---------------------------- file upload path --------------------------- */
 
 /**
- * Text-like attachments are held (propagation stopped) while we read and
- * evaluate them, then either released or dropped. Anything not text-like is
- * never touched at all — the event flows on untouched and no filename or
- * metadata is recorded.
+ * Scannable attachments — text-like files and .xlsx/.docx (see
+ * `isScannableFile`) — are held (propagation stopped) while we read and
+ * evaluate them, then either released or dropped. Anything else is never
+ * touched at all — the event flows on untouched and no filename or metadata
+ * is recorded.
  */
 /**
  * Inputs whose files are currently held while a scan runs. Browsers fire
@@ -369,7 +370,7 @@ function onFileInputEvent(e: Event) {
   }
 
   const files = input.files ? Array.from(input.files) : [];
-  const scannable = files.filter(isTextLikeFile);
+  const scannable = files.filter(isScannableFile);
   if (scannable.length === 0) return;
 
   e.stopImmediatePropagation();
@@ -432,7 +433,7 @@ document.addEventListener(
     if (e.target instanceof HTMLInputElement && e.target.type === "file") return;
     const files = e.dataTransfer?.files ? Array.from(e.dataTransfer.files) : [];
     if (files.length === 0) return; // text drops are handled by the paste path
-    const scannable = files.filter(isTextLikeFile);
+    const scannable = files.filter(isScannableFile);
     if (scannable.length === 0) return;
 
     const target = e.target instanceof HTMLElement ? e.target : document.body;

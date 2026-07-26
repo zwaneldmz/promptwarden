@@ -156,6 +156,40 @@ test("scanBytes: a text file with an IBAN is found", async () => {
   assert.ok(findings.some((f) => f.detector === "iban"));
 });
 
+test("scanBytes: a host-scoped policy exception is forwarded to evaluate() — suppresses the finding when the matching host is passed, not when omitted or different", async () => {
+  const withHostException: Policy = parsePolicy({
+    version: 1,
+    name: "scan-bytes-host-exception",
+    hosts: ["chatgpt.com"],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [{ detector: "credit_card", action: "block" }],
+    exceptions: [
+      {
+        detector: "credit_card",
+        pattern: "^4111[ -]?1111[ -]?1111[ -]?1111$",
+        hosts: ["cli:scan"],
+      },
+    ],
+  });
+  const bytes = new TextEncoder().encode("card on file: 4111 1111 1111 1111");
+
+  const matchingHost = await scanBytes("card.txt", bytes, withHostException, undefined, "cli:scan");
+  assert.equal(matchingHost.findings.length, 0, "excepted when the matching host is passed");
+
+  const omittedHost = await scanBytes("card.txt", bytes, withHostException);
+  assert.ok(
+    omittedHost.findings.some((f) => f.detector === "credit_card"),
+    "not excepted when host is omitted entirely",
+  );
+
+  const differentHost = await scanBytes("card.txt", bytes, withHostException, undefined, "claude-code:PreToolUse");
+  assert.ok(
+    differentHost.findings.some((f) => f.detector === "credit_card"),
+    "not excepted for a different host",
+  );
+});
+
 test("scanBytes: an oversized text file is head-scanned", async () => {
   // IBAN sits well past MAX_TEXT_FILE_BYTES; padding before it is plain
   // filler so only the head-scan cap determines what's visible.

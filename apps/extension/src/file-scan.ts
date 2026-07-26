@@ -69,8 +69,17 @@ export interface FileScan {
   unreadable: number;
 }
 
-/** Read and evaluate `files`. Returns null when nothing was found. */
-export async function scanFiles(files: File[], policy: Policy): Promise<FileScan | null> {
+/**
+ * Read and evaluate `files`. Returns null when nothing was found.
+ *
+ * `host` is forwarded to `scanBytes`'s own trailing `host` parameter (which
+ * forwards it again to `evaluate()`), so a host-scoped policy exception
+ * applies to file contents exactly as it does to typed/pasted text. Optional
+ * and last, so every existing call site (none of which currently pass a
+ * host) keeps compiling unchanged — omitting it just means host-scoped
+ * exceptions don't apply to that scan, never that they apply everywhere.
+ */
+export async function scanFiles(files: File[], policy: Policy, host?: string): Promise<FileScan | null> {
   const findings: Finding[] = [];
   let unreadable = 0;
   for (const file of files) {
@@ -92,7 +101,7 @@ export async function scanFiles(files: File[], policy: Policy): Promise<FileScan
         unreadable++;
         continue;
       }
-      const scanned = await scanBytes(file.name, bytes, policy, file.type);
+      const scanned = await scanBytes(file.name, bytes, policy, file.type, host);
       if (scanned.unreadable) {
         unreadable++;
         continue;
@@ -112,7 +121,7 @@ export async function scanFiles(files: File[], policy: Policy): Promise<FileScan
       unreadable++;
       continue;
     }
-    const scanned = await scanBytes(file.name, bytes, policy, file.type);
+    const scanned = await scanBytes(file.name, bytes, policy, file.type, host);
     if (scanned.unreadable) {
       unreadable++;
       continue;

@@ -159,7 +159,11 @@ function mergeResult(findings: Finding[]): EvaluationResult {
 
 async function handleUserPromptSubmit(envelope: HookEnvelope, policy: Policy, argv: string[]): Promise<void> {
   const prompt = typeof envelope.prompt === "string" ? envelope.prompt : "";
-  const result = evaluate(prompt, policy);
+  // Must match the label passed to every `recordEvent` call below
+  // ("claude-code:UserPromptSubmit") — see PreToolUse's identical pairing
+  // for why: an exception scoped to this surface has to see the same string
+  // an event from it is logged under, or the two can never agree.
+  const result = evaluate(prompt, policy, "claude-code:UserPromptSubmit");
   const action = topAction(result.findings);
 
   if (action === null) return; // clean: allow, silent — no output at all
@@ -261,7 +265,9 @@ async function handlePreToolUse(envelope: HookEnvelope, policy: Policy): Promise
   const leaves: StringLeaf[] = [];
   collectStringLeaves(toolInput, [], leaves);
 
-  const leafResults = leaves.map((leaf) => ({ ...leaf, result: evaluate(leaf.text, policy) }));
+  // "claude-code:PreToolUse" — the same label every `recordEvent` call below
+  // this function uses.
+  const leafResults = leaves.map((leaf) => ({ ...leaf, result: evaluate(leaf.text, policy, "claude-code:PreToolUse") }));
   const allFindings = leafResults.flatMap((lr) => lr.result.findings);
   const action = topAction(allFindings);
 

@@ -91,10 +91,16 @@ async function readStdin(): Promise<string> {
  * `redact` counts toward needsWarning here: a scanner cannot rewrite a file
  * in place, so a redact rule surfaces as a warning, matching how the browser
  * extension treats file uploads.
+ *
+ * `surface` is forwarded to `scanBytes`'s trailing `host` parameter — the
+ * same resolved surface label passed to the stdin `evaluate()` call and to
+ * `recordEvent` below, so a host-scoped policy exception applies uniformly
+ * regardless of which input source produced the text.
  */
 async function scanOneFile(
   filePath: string,
   policy: Policy,
+  surface: string,
 ): Promise<{ findings: Finding[]; blocked: boolean; needsWarning: boolean } | null> {
   let bytes: Buffer;
   try {
@@ -102,7 +108,7 @@ async function scanOneFile(
   } catch {
     return null;
   }
-  const { findings, unreadable } = await scanBytes(filePath, new Uint8Array(bytes), policy);
+  const { findings, unreadable } = await scanBytes(filePath, new Uint8Array(bytes), policy, undefined, surface);
   if (unreadable) return null;
   const blocked = findings.some((f) => f.action === "block");
   const needsWarning =
@@ -131,16 +137,22 @@ export async function runScan(argv: string[]): Promise<number> {
     return 3;
   }
 
+  // Resolved once, up front, so the same label reaches every evaluate()/
+  // scanBytes() call below AND the `recordEvent` call further down — a
+  // host-scoped exception and the event it's meant to suppress must agree
+  // on what this surface is called.
+  const surface = args.surface ?? "cli:scan";
+
   const perSource: {
     label: string;
     result: { findings: Finding[]; blocked: boolean; needsWarning: boolean };
   }[] = [];
 
   if (args.stdin) {
-    perSource.push({ label: "stdin", result: evaluate(await readStdin(), policy) });
+    perSource.push({ label: "stdin", result: evaluate(await readStdin(), policy, surface) });
   }
   for (const filePath of args.files) {
-    const result = await scanOneFile(filePath, policy);
+    const result = await scanOneFile(filePath, policy, surface);
     if (result === null) {
       process.stderr.write(`promptwarden scan: could not read or extract text from "${filePath}"\n`);
       return 3;
@@ -174,7 +186,6 @@ export async function runScan(argv: string[]): Promise<number> {
   // start/end offsets are only meaningful within their own source text.
   const merged: EvaluationResult = { findings, redactedText: "", blocked, needsWarning };
 
-  const surface = args.surface ?? "cli:scan";
   await recordEvent(merged, policy, surface);
 
   const message = toUserMessage(merged);

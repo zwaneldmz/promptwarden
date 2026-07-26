@@ -83,13 +83,24 @@ export interface Policy {
    */
   retentionDays?: number;
   /**
-   * Minimum count of DISTINCT matched strings, WITHIN A SINGLE detector
-   * category (email, iban, credit_card, phone, or at_svnr — never summed
-   * across categories; see engine.ts evaluate()), in one evaluated text
-   * before the synthetic "bulk_pii" finding fires — "someone pasted our
-   * whole customer list." Positive integer. Default 5. `bulk_pii` only
-   * fires when the policy carries an explicit `bulk_pii` rule; it is never
-   * activated implicitly by `defaultAction`.
+   * Threshold for the synthetic "bulk_pii" finding — "someone pasted our
+   * whole customer list." Positive integer, default 5. Also derives
+   * `CROSS_CATEGORY_MIN = max(2, ceil(bulkPiiThreshold / 2))` (3 at the
+   * default). `bulk_pii` fires when EITHER:
+   *
+   *   (a) a SINGLE detector category (email, iban, credit_card, phone, or
+   *       at_svnr) reaches `bulkPiiThreshold` DISTINCT matched strings on
+   *       its own — many values of the same kind, never summed across
+   *       categories — OR
+   *   (b) at least TWO categories each reach `CROSS_CATEGORY_MIN` distinct
+   *       values — breadth across categories AND depth within each one, the
+   *       shape of a pasted customer table (3 rows -> 3 emails + 3 phones +
+   *       3 IBANs) as opposed to one person's signature block (1 email + 4
+   *       of their own phone numbers: depth without breadth).
+   *
+   * See engine.ts evaluate() for the full rationale and worked examples.
+   * `bulk_pii` only fires when the policy carries an explicit `bulk_pii`
+   * rule; it is never activated implicitly by `defaultAction`.
    */
   bulkPiiThreshold?: number;
   /**
@@ -105,7 +116,16 @@ export interface Policy {
    *     DISABLES that detector; give such an exception a `note` explaining
    *     why that's intentional), AND
    *   - if `detector` is set, the finding's detector id equals it, AND
-   *   - if `hosts` is set, the host passed to `evaluate()` is in that list.
+   *   - if `hosts` is set, the host passed to `evaluate()` matches at least
+   *     one entry via `hostMatchesPattern` — the SAME matching `policy.hosts`
+   *     uses (exact string equality, or a leading-wildcard subdomain match,
+   *     e.g. "*.internal.example.com"), not a stricter exact-only check.
+   *     "Host" here is the caller's surface label, not necessarily a
+   *     browser hostname: `location.hostname` in the extension, but a
+   *     string like "cli:scan" or "claude-code:PreToolUse" from a
+   *     non-browser adapter — whatever that call site also passes to
+   *     `toLogRecord`/`recordEvent`, so an exception scoped to a surface and
+   *     an event logged from it always agree on what the surface is called.
    *
    * An exception whose `pattern` fails to compile as a `RegExp` is rejected
    * by `parsePolicy` (mirrors the same guard already applied to custom
@@ -234,15 +254,30 @@ export function parsePolicy(input: unknown): Policy {
   return input as Policy;
 }
 
+/**
+ * Does `host` match a single pattern entry — exact string equality, or a
+ * leading-wildcard subdomain match ("*.example.com" matches both
+ * "foo.example.com" and the bare apex "example.com")? Case-insensitive.
+ *
+ * This is the one implementation of "what does a host pattern mean" in the
+ * engine: `hostMatches` uses it for every entry of `policy.hosts`, and
+ * `evaluate()`'s exception matching (see the `exceptions` doc comment on
+ * `Policy`) uses it for every entry of a `PolicyException.hosts` list — so
+ * an admin writing "*.internal.example.com" in an exception gets the same
+ * wildcard behaviour they already rely on in `policy.hosts`, not a silent
+ * exact-match-only fallback.
+ */
+export function hostMatchesPattern(host: string, pattern: string): boolean {
+  const h = host.toLowerCase();
+  const p = pattern.toLowerCase();
+  if (p.startsWith("*.")) {
+    const suffix = p.slice(1); // ".example.com"
+    return h.endsWith(suffix) || h === p.slice(2);
+  }
+  return h === p;
+}
+
 /** Does `host` match any policy host entry (exact or "*." wildcard)? */
 export function hostMatches(policy: Policy, host: string): boolean {
-  const h = host.toLowerCase();
-  return policy.hosts.some((entry) => {
-    const e = entry.toLowerCase();
-    if (e.startsWith("*.")) {
-      const suffix = e.slice(1); // ".example.com"
-      return h.endsWith(suffix) || h === e.slice(2);
-    }
-    return h === e;
-  });
+  return policy.hosts.some((entry) => hostMatchesPattern(host, entry));
 }

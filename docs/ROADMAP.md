@@ -97,13 +97,15 @@ omitted deliberately — they rot; the named symbol is the anchor.
 
 ### 1.3 The privacy gate has two holes
 
-8. **`logging:"content"` persists the entire prompt, not the matched text.** The `bulk_pii`
-   post-pass synthesizes `{ start: 0, end: text.length, match: text }` and `toLogRecord`
-   copies `f.match` verbatim, so one record holds the whole prompt — or, via `scanFiles`, the
-   whole extracted text of a 20 MB spreadsheet. Both shipped profiles reach this state
-   (`defaultAction:"warn"`, no `bulk_pii` rule). The redact branch already avoids the
-   whole-text span; do the same for logging (store span length, not text) and cap per-finding
-   `match` (≈64 chars, centred). `MAX_BUFFERED` caps entry *count*, never bytes, against a
+8. **`logging:"content"` persists the entire prompt, not the matched text.** ~~The `bulk_pii`
+   post-pass synthesizes `{ start: 0, end: text.length, match: text }`~~ — stale: `bulk_pii`'s
+   non-redact finding now carries a synthetic `${totalDistinct} distinct matches` token instead
+   of `text` (see `engine.ts` `evaluate()`), and `toLogRecord`'s 64-char cap
+   (`MAX_LOGGED_MATCH_CHARS`) truncates any single finding's `match` regardless of source — both
+   already covered by `fp-corpus.test.ts`. The rest of this item is still open: via `scanFiles`
+   a non-bulk_pii finding's `match` on a large upload is still whatever span the detector itself
+   returned (bounded per-detector, but never audited against a byte budget end-to-end).
+   `MAX_BUFFERED` caps entry *count*, never bytes, against a
    ~10 MB quota, and the resulting `set()` rejection is swallowed into `console.warn` — so a
    content-mode deployment stops recording at an unpredictable point. Add a byte budget to
    `appendCapped` and a `storage-write-failed` diagnostic. Render the effective logging mode as
@@ -188,44 +190,50 @@ omitted deliberately — they rot; the named symbol is the anchor.
     changes meaning. The pattern now ends on a digit; regression test in
     `packages/policy-engine/test/fp-corpus.test.ts`.
 
-16. **`bulk_pii` fires on an ordinary email signature under both shipped profiles, and inherits
-    `defaultAction` when unconfigured.** Distinctness is over raw match *strings*, so
-    `AT61 1904 3002 3457 3201` and `AT611904300234573201` count as two. A German business
-    signature (2 addresses + Tel + Mobil + Fax) trips the default threshold of 5. Normalise
-    (strip separators, lowercase) before the `Set`; require structural repetition — matches on
-    ≥N distinct lines, or ≥N distinct matches from a single detector — since a signature has
-    one of each category and a CSV dump has 200 emails; and default `bulk_pii` to `observe`
-    when no rule declares it rather than silently inheriting `defaultAction` (a
-    `defaultAction:"block"` profile currently blocks signatures). Re-tune the threshold against
-    a corpus; the current 5 was not derived from anything measurable.
-    `packages/policy-engine/src/engine.ts`, `packages/policy-engine/src/policy.ts`,
-    `profiles/*.json` — **1d**
+16. ~~**`bulk_pii` fires on an ordinary email signature under both shipped profiles, and
+    inherits `defaultAction` when unconfigured.**~~ **Done.** Per-category distinct-value
+    counting (never a flat union across all five categories) stopped a German business
+    signature's 4 of their own phone numbers + 1 own email from summing to the old threshold of
+    5 — but that alone then missed the product's flagship scenario, a 3-row customer table (3
+    emails + 3 phones + 3 IBANs) where no single category reaches 5 either. `bulk_pii` now fires
+    when EITHER (a) one category alone reaches `bulkPiiThreshold` (unchanged), OR (b) at least
+    two categories each reach `CROSS_CATEGORY_MIN = max(2, ceil(bulkPiiThreshold / 2))` (3 at the
+    default threshold of 5) — breadth across categories *and* depth within each, which a
+    signature never has. It still requires an explicit `bulk_pii` rule to fire at all rather than
+    silently inheriting `defaultAction`. One narrower gap from the original write-up is still
+    open: distinctness is per RAW matched string within a category, so
+    `AT61 1904 3002 3457 3201` and `AT611904300234573201` still count as two rather than one
+    normalised value. Tests in `packages/policy-engine/test/fp-corpus.test.ts` cover the
+    signature staying silent, a 5-email fixture firing via arm (a), a 3-row customer table
+    firing via arm (b), and a 2-email+1-IBAN+1-phone+1-SVNR fixture staying silent under both
+    arms.
 
-17. **No exception mechanism at any granularity, so the only lever for a known-good pattern is
-    disabling the detector.** `4111 1111 1111 1111`, `4242 4242 4242 4242` and
-    `5555 5555 5555 4444` all block — engineers paste those daily and the only escape is
-    `credit_card: allow`, which also allows real cards. Add `except?: string[]` to
-    `DetectorRule` (compiled regexes tested against each candidate match, dropping the
-    finding), with built-in defaults for the reserved test BINs, `example.com`/`.invalid`/
-    `.test` domains and RFC 5737 addresses. Add per-rule `hosts?: string[]` defaulting to the
-    policy's, so one document can be strict externally and permissive on an internal tool.
-    Both are pure additions to `parsePolicy` and the finding filter.
-    `packages/policy-engine/src/policy.ts`, `packages/policy-engine/src/engine.ts` — **1–1.5d**
+17. ~~**No exception mechanism at any granularity, so the only lever for a known-good pattern is
+    disabling the detector.**~~ **Done**, in a different shape than sketched here. Rather than a
+    per-rule `DetectorRule.except?: string[]`, the shipped mechanism is a top-level
+    `Policy.exceptions: PolicyException[]`: each entry is a `pattern` (RegExp, tested against a
+    finding's matched text) optionally scoped to one `detector` and/or a `hosts` list, dropped
+    before a finding can block/warn/redact or count toward `bulk_pii`. An exception's `hosts` now
+    matches exactly the way `policy.hosts` does — exact string, or a leading `*.` wildcard
+    including the bare-apex case — via the shared `hostMatchesPattern`, not exact-string-only,
+    and is matched against the caller's surface label: a hostname in the browser, or a
+    non-browser label like `cli:scan` / `claude-code:PreToolUse` elsewhere. Not shipped, and
+    still open if a real need surfaces: built-in default exceptions for the reserved test BINs /
+    RFC 5737 addresses / `example.com`-class domains, and a separate per-rule `hosts?` on
+    `DetectorRule` for scoping a rule's *action* by host (distinct from an exception). Tests in
+    `packages/policy-engine/test/engine.test.ts`.
 
-18. **Observe mode cannot be used to tune.** `toLogRecord` emits `categories` and `actions` as
-    two independent deduped sets, so nothing says which action belonged to which detector — the
-    popup then attributes one `primaryAction` to *every* category, reporting e.g.
-    `bulk_pii: redact` for an event where `bulk_pii` only warned. Deduping also destroys
-    volume: 40 emails in one prompt is one entry. And the user's override choice — "Send
-    anyway" / "Redact and continue" / "Cancel" — is recorded nowhere, though override rate per
-    rule is the standard FP proxy and the choice is already in front of the user. Change the
-    record to `findings: [{ detector, action, count }]`, fix `buildAggregate` to key off it,
-    log the guardrail outcome as its own record type from the `onPick` handlers, and surface
-    per-rule override rate in the popup. Add a `fingerprint` logging tier between `event` and
-    `content`: per finding, detector + match length + character-class shape + truncated hash of
-    the normalised match — enough to diagnose the IBAN FP above without storing an IBAN.
-    `packages/policy-engine/src/engine.ts`, `apps/extension/src/content.ts`,
-    `apps/extension/popup.js` — **1.5–2d**
+18. ~~**Observe mode cannot be used to tune.**~~ **Done**, for the bug as named; several
+    adjacent asks in the original write-up remain open. `toLogRecord` now emits
+    `pairs: [{ detector, action }]`, deduped and sorted, binding each detector to the action it
+    actually took — fixing the specific complaint that `categories`/`actions` as two
+    independently deduped sets left the popup guessing one `primaryAction` for every category.
+    Not part of this change, and still open: a per-finding `count` (volume — 40 emails in one
+    prompt is still one `pairs` entry), a `fingerprint` logging tier between `event` and
+    `content`, logging the guardrail outcome ("Send anyway" / "Redact and continue" / "Cancel")
+    as its own record type from the `onPick` handlers, and surfacing per-rule override rate in
+    the popup — all `apps/extension` work outside `packages/policy-engine`. Tests in
+    `packages/policy-engine/test/engine.test.ts`.
 
 ### 1.5 Operability and release
 

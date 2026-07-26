@@ -220,7 +220,13 @@ function onSubmitAttempt(e: Event, editable: HTMLElement, trigger: SubmitTrigger
   const text = readText(editable);
   if (!text.trim()) return;
 
-  const result = evaluate(text, policy);
+  // `host` here MUST be the same string `log()` below passes to
+  // `toLogRecord` (both are `location.hostname`): a host-scoped policy
+  // exception and an event logged from this surface have to agree on what
+  // "this surface" is called, or an exception written for "claude.ai" could
+  // silently never match evaluations tagged under a different label for the
+  // same site.
+  const result = evaluate(text, policy, location.hostname);
   if (result.findings.length === 0) return;
 
   // Observe-only result (silent baseline mode): the policy wants a record,
@@ -380,7 +386,7 @@ document.addEventListener(
     const pasted = e.clipboardData?.getData("text/plain") ?? "";
     if (!pasted.trim()) return;
 
-    const result = evaluate(pasted, policy);
+    const result = evaluate(pasted, policy, location.hostname);
     if (result.findings.length === 0) return;
 
     // Observe-only result: record it, let the paste land untouched.
@@ -459,7 +465,7 @@ function onFileInputEvent(e: Event) {
   e.stopImmediatePropagation();
   heldInputs.add(input);
 
-  void scanFiles(scannable, policy)
+  void scanFiles(scannable, policy, location.hostname)
       .then((scan) => {
         if (!scan) {
           releaseFileInput(input);
@@ -531,7 +537,7 @@ document.addEventListener(
     e.preventDefault();
     e.stopImmediatePropagation();
 
-    void scanFiles(scannable, policy)
+    void scanFiles(scannable, policy, location.hostname)
       .then((scan) => {
         if (!scan) {
           replayDrop(target, files);

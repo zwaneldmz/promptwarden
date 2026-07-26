@@ -100,12 +100,21 @@ export interface ScanBytesResult {
  * Never throws: any failure (a decode error, a malformed archive, …) comes
  * back as `unreadable: true` instead of propagating, so one bad file never
  * aborts a caller's whole-batch scan.
+ *
+ * `host` is forwarded verbatim to both internal `evaluate()` calls (text and
+ * office) — see `evaluate()`'s own doc comment for what it's for. Omitting
+ * it means host-scoped policy exceptions never apply to this scan, never
+ * that they apply everywhere; passing it must be the identical surface
+ * label the caller also passes to `toLogRecord`/`recordEvent` for the same
+ * event, so an exception scoped to a surface and an event logged from it
+ * always agree on what the surface is called.
  */
 export async function scanBytes(
   name: string,
   bytes: Uint8Array,
   policy: Policy,
   mimeType?: string,
+  host?: string,
 ): Promise<ScanBytesResult> {
   try {
     const kind = classifyFile(name, mimeType);
@@ -118,7 +127,7 @@ export async function scanBytes(
       const text = await extractOfficeText(bytes, officeKind(name, mimeType));
       if (text === null) return { findings: [], unreadable: true };
       if (!text.trim()) return { findings: [], unreadable: false };
-      return { findings: evaluate(text, policy).findings, unreadable: false };
+      return { findings: evaluate(text, policy, host).findings, unreadable: false };
     }
 
     // Text: never decode more than the head-scan cap, regardless of how
@@ -127,7 +136,7 @@ export async function scanBytes(
     const head = bytes.length > MAX_TEXT_FILE_BYTES ? bytes.subarray(0, MAX_TEXT_FILE_BYTES) : bytes;
     const text = new TextDecoder().decode(head);
     if (!text.trim()) return { findings: [], unreadable: false };
-    return { findings: evaluate(text, policy).findings, unreadable: false };
+    return { findings: evaluate(text, policy, host).findings, unreadable: false };
   } catch {
     return { findings: [], unreadable: true };
   }

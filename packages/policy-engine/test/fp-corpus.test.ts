@@ -355,7 +355,7 @@ function bulkPolicy(overrides: Partial<Record<string, unknown>> = {}): Policy {
 const FIVE_EMAILS = "a@example.com b@example.com c@example.com d@example.com e@example.com";
 const FOUR_EMAILS = "a@example.com b@example.com c@example.com d@example.com";
 
-test("bulk_pii: 5 distinct emails meets the default threshold and fires", () => {
+test("bulk_pii: 5 distinct emails meets the default threshold and fires via arm (a) — a single category alone", () => {
   const r = evaluate(FIVE_EMAILS, bulkPolicy());
   assert.equal(r.findings.some((f) => f.detector === "bulk_pii"), true);
   assert.equal(r.blocked, true);
@@ -386,15 +386,16 @@ test("bulk_pii: bulkPiiThreshold overrides the default of 5", () => {
   assert.equal(evaluate(twoEmails, policy).findings.some((f) => f.detector === "bulk_pii"), false);
 });
 
-test("bulk_pii: distinct matches spread thinly across categories do NOT sum to the threshold (per-category counting, ROADMAP §1.4 #16(a))", () => {
+test("bulk_pii: 2 emails + 1 IBAN + 1 phone + 1 SVNR stays silent under BOTH arms — breadth without depth", () => {
   const policy = bulkPolicy();
   // 2 emails + 1 iban + 1 phone + 1 svnr = 5 distinct matches IN TOTAL, but
   // every individual category (email:2, iban:1, phone:1, at_svnr:1) stays
-  // well under the threshold of 5. The old behaviour summed distinct
-  // matches across all five bulk_pii categories and fired here — exactly
-  // the flat-union design that also produced the email-signature false
-  // positive below. bulk_pii must now stay silent: no single category's
-  // own distinct count reaches the threshold.
+  // well under the single-category threshold of 5 (arm (a) fails), AND no
+  // category reaches CROSS_CATEGORY_MIN (3 at the default threshold) except
+  // email at 2 — which is still short of 3 — so at most zero categories
+  // clear the cross-category bar and arm (b)'s "at least two categories"
+  // fails too. Four categories are touched (breadth), but none has enough
+  // depth, so bulk_pii must stay silent under both arms.
   const fiveDistinctAcrossCategories =
     "a@example.com b@example.com pay to AT61 1904 3002 3457 3201 please call +43 660 1234567 about the ticket " +
     "svnr 1237 010180 on file";
@@ -402,8 +403,8 @@ test("bulk_pii: distinct matches spread thinly across categories do NOT sum to t
     evaluate(fiveDistinctAcrossCategories, policy).findings.some((f) => f.detector === "bulk_pii"),
     false,
   );
-  // Push ONE category (email) over the threshold on its own and it fires,
-  // regardless of what else is mixed in alongside it.
+  // Push ONE category (email) over the threshold on its own and it fires
+  // via arm (a), regardless of what else is mixed in alongside it.
   const fiveEmailsPlusOther = `${FIVE_EMAILS} pay to AT61 1904 3002 3457 3201 please`;
   assert.equal(
     evaluate(fiveEmailsPlusOther, policy).findings.some((f) => f.detector === "bulk_pii"),
@@ -412,13 +413,21 @@ test("bulk_pii: distinct matches spread thinly across categories do NOT sum to t
 });
 
 /**
- * ROADMAP §1.4 #16(a) reproduction: an ordinary business email signature —
- * one person's own email plus several of THEIR OWN phone numbers under
+ * ROADMAP §1.4 #16 reproduction: an ordinary business email signature — one
+ * person's own email plus several of THEIR OWN phone numbers under
  * different labels (main line, direct extension, mobile, fax) — reproduced
- * the bug under the OLD flat cross-category count: 4 distinct phone numbers
- * + 1 distinct email = 5 distinct matches in total, meeting the default
- * threshold of 5 and blocking an everyday email sign-off. Confirmed via a
- * throwaway repro against the pre-fix engine before writing this test.
+ * a false positive under the ORIGINAL flat cross-category count: 4 distinct
+ * phone numbers + 1 distinct email = 5 distinct matches in total, meeting
+ * the default threshold of 5 and blocking an everyday email sign-off.
+ * Confirmed via a throwaway repro against the pre-fix engine before writing
+ * this test.
+ *
+ * Under the current composite rule it must stay silent under BOTH arms:
+ * arm (a) fails because neither category (phone:4, email:1) reaches the
+ * threshold of 5 on its own; arm (b) fails because although phone (4)
+ * clears CROSS_CATEGORY_MIN (3 at the default threshold), email (1) does
+ * not, so only ONE category qualifies — breadth's "at least two categories"
+ * is never met. Depth in one category, no breadth across categories.
  */
 const ORDINARY_EMAIL_SIGNATURE = [
   "Mit freundlichen Gruessen / Best regards,",
@@ -451,9 +460,9 @@ test("bulk_pii: an ordinary email signature (one person's own email + several of
   assert.equal(r.blocked, false);
 });
 
-test("bulk_pii: a genuine multi-customer export (5 distinct customers' emails) still fires", () => {
+test("bulk_pii: a genuine multi-customer export (5 distinct customers' emails) still fires via arm (a)", () => {
   // Realistic "someone pasted our whole customer list" shape: one line per
-  // customer, each contributing a distinct email — the case per-category
+  // customer, each contributing a distinct email — the case single-category
   // counting exists to keep catching.
   const customerExport = [
     "Name, Email",
@@ -465,6 +474,40 @@ test("bulk_pii: a genuine multi-customer export (5 distinct customers' emails) s
   ].join("\n");
   const r = evaluate(customerExport, bulkPolicy());
   assert.equal(r.findings.some((f) => f.detector === "bulk_pii"), true);
+  assert.equal(r.blocked, true);
+});
+
+test("bulk_pii: a 3-row customer table (3 emails + 3 phones + 3 IBANs) fires via arm (b) — breadth across categories AND depth within each, not depth in one alone", () => {
+  // The product's flagship scenario (ROADMAP §1.4 #16): a pasted customer
+  // table where no single category reaches the default threshold of 5, but
+  // three separate categories each carry 3 distinct values — one row per
+  // customer, all three fields repeating. Arm (a) alone (the #16(a) fix)
+  // went silent on exactly this shape; arm (b) is what recovers it. IBANs
+  // are distinct, checksum-valid AT literals (verified via the same mod-97
+  // check the detector itself runs), not reused across rows.
+  const customerTable = [
+    "Name, Email, Phone, IBAN",
+    "Alice Smith, alice.smith@customerco.example, +43 660 1234567, AT34 1904 3002 3457 3202",
+    "Bob Jones, bob.jones@customerco.example, +43 664 2345678, AT96 2011 1000 3457 3310",
+    "Carol White, carol.white@customerco.example, +43 676 3456789, AT83 3600 0000 0001 2345",
+  ].join("\n");
+  const r = evaluate(customerTable, bulkPolicy());
+
+  const distinctByDetector = (detector: string) =>
+    new Set(r.findings.filter((f) => f.detector === detector).map((f) => f.match)).size;
+  const distinctEmails = distinctByDetector("email");
+  const distinctPhones = distinctByDetector("phone");
+  const distinctIbans = distinctByDetector("iban");
+
+  // Sanity: exactly 3 distinct values in each of 3 categories, and none
+  // anywhere near the single-category threshold of 5 — ruling out arm (a)
+  // as the reason this fires, so the test is explicit about which arm does.
+  assert.equal(distinctEmails, 3);
+  assert.equal(distinctPhones, 3);
+  assert.equal(distinctIbans, 3);
+  assert.ok(distinctEmails < 5 && distinctPhones < 5 && distinctIbans < 5, "no category alone meets arm (a)");
+
+  assert.equal(r.findings.some((f) => f.detector === "bulk_pii"), true, "arm (b) must fire instead");
   assert.equal(r.blocked, true);
 });
 

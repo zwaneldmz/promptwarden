@@ -192,8 +192,15 @@ interface EvaluatedHit<H> {
   result: EvaluationResult;
 }
 
-function evaluateHits<H extends { original: string }>(hits: H[], policy: Policy): EvaluatedHit<H>[] {
-  return hits.map((hit) => ({ hit, result: evaluate(hit.original, policy) }));
+/**
+ * `host` must be the same label the caller passes to `recordEvent` for this
+ * same batch of hits ("cli:mcp:call" for outbound tool arguments,
+ * "cli:mcp:result" for inbound tool results below) — otherwise a policy
+ * exception scoped to one direction could never match evaluations tagged
+ * under the other.
+ */
+function evaluateHits<H extends { original: string }>(hits: H[], policy: Policy, host: string): EvaluatedHit<H>[] {
+  return hits.map((hit) => ({ hit, result: evaluate(hit.original, policy, host) }));
 }
 
 /** Merge per-string EvaluationResults into one, for recordEvent/toUserMessage — neither reads start/end/redactedText off it, only findings/blocked/needsWarning (see apps/cli/src/scan.ts's identical pattern). */
@@ -262,7 +269,7 @@ async function processOutboundLine(raw: string, ctx: GatewayContext): Promise<vo
     return;
   }
 
-  const evaluated = evaluateHits(hits, ctx.policy);
+  const evaluated = evaluateHits(hits, ctx.policy, "cli:mcp:call");
   const merged = mergeResults(evaluated);
   await recordEvent(merged, ctx.policy, "cli:mcp:call");
 
@@ -339,7 +346,7 @@ async function processInboundLine(raw: string, ctx: GatewayContext): Promise<voi
     return;
   }
 
-  const evaluated = evaluateHits(hits, ctx.policy);
+  const evaluated = evaluateHits(hits, ctx.policy, "cli:mcp:result");
   const merged = mergeResults(evaluated);
   await recordEvent(merged, ctx.policy, "cli:mcp:result");
 

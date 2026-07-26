@@ -250,9 +250,29 @@ async function checkLocalPolicyLiveUpdate(ctx, page) {
 
   // No reload: paste the same text into the still-open tab and confirm the
   // now-updated policy intercepts it.
-  await page.evaluate((t) => navigator.clipboard.writeText(t), EMAIL_TEXT);
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+v" : "Control+v");
-  await expectIntercepted(page, ed);
+  //
+  // Retried rather than pasted once, because the content script picks the new
+  // policy up asynchronously — storage.onChanged fires, then a get-policy
+  // round trip through the service worker resolves and parses it. A single
+  // paste can win that race, and a paste that isn't intercepted is simply
+  // allowed: it inserts its text and is over, so polling after the fact can
+  // never see a guardrail that was never going to appear. Each attempt clears
+  // the box first so an un-intercepted paste can't accumulate.
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    await ed.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+a" : "Control+a");
+    await page.keyboard.press("Backspace");
+    await page.evaluate((t) => navigator.clipboard.writeText(t), EMAIL_TEXT);
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+v" : "Control+v");
+    await page.waitForTimeout(400);
+    if (await guardrailShowing(page)) return;
+    if (Date.now() > deadline) {
+      throw new Error(
+        "policy pushed to chrome.storage.local never reached the open tab (no guardrail after 10s of retried pastes)",
+      );
+    }
+  }
 }
 
 const CHECKS = [

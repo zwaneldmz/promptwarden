@@ -144,7 +144,12 @@ export function activate(context: vscode.ExtensionContext): void {
   async function scanDocument(document: vscode.TextDocument): Promise<EvaluationResult | undefined> {
     if (!isScannable(document)) return undefined;
     const policy = await getPolicy();
-    const result = evaluate(document.getText(), policy);
+    // "vscode" — this extension's fixed surface label. It never calls
+    // toLogRecord/recordEvent itself, but a policy's host-scoped exceptions
+    // are shared vocabulary across every adapter, so this still has to be
+    // the same string any other PromptWarden surface would use for "the
+    // VS Code extension" if it ever logged an event.
+    const result = evaluate(document.getText(), policy, "vscode");
     diagnostics.set(document.uri, result.findings.map((f) => findingToDiagnostic(document, f)));
     updateStatusBar();
     return result;

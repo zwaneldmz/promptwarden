@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { evaluate, toLogRecord } from "../src/engine.js";
-import { parsePolicy, hostMatches, Policy } from "../src/policy.js";
+import { parsePolicy, hostMatches, hostMatchesPattern, Policy } from "../src/policy.js";
 import { openAiStyleKey } from "./fixtures.js";
 
 const strict: Policy = parsePolicy({
@@ -119,6 +119,33 @@ test("host matching: exact and wildcard", () => {
   assert.equal(hostMatches(strict, "claude.anthropic.com"), true);
   assert.equal(hostMatches(strict, "anthropic.com"), true);
   assert.equal(hostMatches(strict, "evil-chatgpt.com"), false);
+});
+
+/* ------------------- hostMatchesPattern (shared host-pattern matcher) ----------------- */
+
+test("hostMatchesPattern: exact match, case-insensitively", () => {
+  assert.equal(hostMatchesPattern("chatgpt.com", "chatgpt.com"), true);
+  assert.equal(hostMatchesPattern("ChatGPT.com", "CHATGPT.COM"), true);
+});
+
+test("hostMatchesPattern: leading-wildcard subdomain match, including the bare-apex case", () => {
+  assert.equal(hostMatchesPattern("claude.anthropic.com", "*.anthropic.com"), true);
+  assert.equal(hostMatchesPattern("deep.sub.anthropic.com", "*.anthropic.com"), true);
+  // The bare apex itself (no subdomain) also matches "*." — same behaviour
+  // hostMatches already relies on for policy.hosts.
+  assert.equal(hostMatchesPattern("anthropic.com", "*.anthropic.com"), true);
+});
+
+test("hostMatchesPattern: non-match", () => {
+  assert.equal(hostMatchesPattern("evil-chatgpt.com", "chatgpt.com"), false);
+  assert.equal(hostMatchesPattern("notanthropic.com", "*.anthropic.com"), false);
+  assert.equal(hostMatchesPattern("anthropic.com.evil.example", "*.anthropic.com"), false);
+});
+
+test("hostMatchesPattern: a non-browser surface label like \"cli:scan\" matches only that exact label", () => {
+  assert.equal(hostMatchesPattern("cli:scan", "cli:scan"), true);
+  assert.equal(hostMatchesPattern("cli:scan", "claude-code:PreToolUse"), false);
+  assert.equal(hostMatchesPattern("claude-code:PreToolUse", "claude-code:PreToolUse"), true);
 });
 
 test("invalid policies are rejected with readable errors", () => {
@@ -305,6 +332,57 @@ test("exceptions: host scoping — applies only on the listed host, and never ap
   assert.equal(evaluate(text, policy, "internal-tool.example").blocked, false, "excepted on the listed host");
   assert.equal(evaluate(text, policy, "chatgpt.com").blocked, true, "not excepted elsewhere");
   assert.equal(evaluate(text, policy).blocked, true, "not excepted when no host is passed at all");
+});
+
+test("exceptions: hosts entries support the same leading-wildcard matching as policy.hosts, not exact-string-only", () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "exceptions-host-wildcard",
+    hosts: ["chatgpt.com", "*.internal.example.com"],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [{ detector: "credit_card", action: "block" }],
+    exceptions: [
+      {
+        detector: "credit_card",
+        pattern: "^4111[ -]?1111[ -]?1111[ -]?1111$",
+        hosts: ["*.internal.example.com"],
+      },
+    ],
+  });
+  const text = "card 4111 1111 1111 1111 on file";
+  assert.equal(
+    evaluate(text, policy, "tools.internal.example.com").blocked,
+    false,
+    "a subdomain of the wildcard is excepted",
+  );
+  assert.equal(
+    evaluate(text, policy, "internal.example.com").blocked,
+    false,
+    "the bare apex of the wildcard is excepted too",
+  );
+  assert.equal(evaluate(text, policy, "chatgpt.com").blocked, true, "a non-matching host is not excepted");
+});
+
+test('exceptions: hosts scoped to a CLI surface label ("cli:scan") match only that exact label, per the surface-label contract', () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "exceptions-cli-surface-label",
+    hosts: ["cli:scan"],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [{ detector: "credit_card", action: "block" }],
+    exceptions: [
+      { detector: "credit_card", pattern: "^4111[ -]?1111[ -]?1111[ -]?1111$", hosts: ["cli:scan"] },
+    ],
+  });
+  const text = "card 4111 1111 1111 1111 on file";
+  assert.equal(evaluate(text, policy, "cli:scan").blocked, false, "matches the exact surface label");
+  assert.equal(
+    evaluate(text, policy, "claude-code:PreToolUse").blocked,
+    true,
+    "a different surface label is not excepted",
+  );
 });
 
 test("exceptions: dropped BEFORE the bulk_pii distinct-count post-pass counts it — an excepted value is not exposure", () => {

@@ -1,5 +1,5 @@
 import { BUILTIN_DETECTORS, DEFAULT_LABELS, RawMatch } from "./detectors.js";
-import { Action, EvaluationResult, Finding, Policy } from "./policy.js";
+import { Action, EvaluationResult, Finding, hostMatchesPattern, Policy } from "./policy.js";
 
 /**
  * Detectors whose matches feed the bulk_pii post-pass (see evaluate()).
@@ -62,7 +62,16 @@ function isExcepted(m: RawMatch, exceptions: CompiledException[], host: string |
   // to allowlist a value is decidable from its opening bytes.
   for (const ex of exceptions) {
     if (ex.detector !== undefined && ex.detector !== m.detector) continue;
-    if (ex.hosts !== undefined && (host === undefined || !ex.hosts.includes(host))) continue;
+    // Same matching as `policy.hosts` (exact or leading-wildcard, see
+    // `hostMatchesPattern`) — an exception scoped to "*.internal.example.com"
+    // matches the way an admin already expects from writing that same shape
+    // in `policy.hosts`, not exact-string-only.
+    if (
+      ex.hosts !== undefined &&
+      (host === undefined || !ex.hosts.some((pattern) => hostMatchesPattern(host, pattern)))
+    ) {
+      continue;
+    }
     const probe =
       m.match.length > MAX_EXCEPTION_TEST_BYTES ? m.match.slice(0, MAX_EXCEPTION_TEST_BYTES) : m.match;
     if (ex.pattern.test(probe)) return true;
@@ -144,21 +153,40 @@ export function evaluate(text: string, policy: Policy, host?: string): Evaluatio
     if (!covered) kept.push(f);
   }
 
-  // bulk_pii post-pass: fires when a SINGLE detector category (email, iban,
-  // credit_card, phone, or at_svnr) reaches N+ DISTINCT values in one
-  // payload — "5 different customers' emails," "5 different IBANs."
-  // Counting is deliberately PER CATEGORY rather than a flat union across
-  // all five (the previous behaviour): an ordinary business email signature
-  // carries one person's own email plus several of THEIR OWN phone numbers
-  // under different labels (office/mobile/fax/direct line) — e.g. 4 distinct
-  // phone numbers + 1 email is 5 distinct values in total, but neither
-  // category individually reaches the threshold, and it is one person's
-  // contact details, not bulk exposure. Requiring the threshold to be met
-  // WITHIN a single category catches the genuine mass-export case (many
-  // distinct values of the SAME kind) without that cross-category false
-  // positive (ROADMAP §1.4 #16(a); fp-corpus.test.ts carries both the
-  // signature fixture that reproduced it and a 5-customer fixture that must
-  // still fire).
+  // bulk_pii post-pass: fires when EITHER
+  //
+  //   (a) a SINGLE detector category (email, iban, credit_card, phone, or
+  //       at_svnr) reaches N+ DISTINCT values on its own — "5 different
+  //       customers' emails," "5 different IBANs" — OR
+  //   (b) at least TWO categories each reach CROSS_CATEGORY_MIN distinct
+  //       values, where CROSS_CATEGORY_MIN = max(2, ceil(threshold / 2)) —
+  //       3 at the default threshold of 5.
+  //
+  // The distinguishing insight: an ordinary business email signature is ONE
+  // person with many contact fields — 1 email + 4 of their own phone
+  // numbers under different labels (office/mobile/fax/direct line) — depth
+  // in a single category, no breadth across categories. A pasted customer
+  // table is MANY people with the SAME fields each — 3 rows of a CSV yield
+  // 3 emails + 3 phones + 3 IBANs — breadth across categories AND depth
+  // within each one. Requiring both breadth (arm b's "at least two
+  // categories") and depth (arm b's "each at CROSS_CATEGORY_MIN") is what
+  // separates the two; counting a flat union of distinct values across all
+  // five categories (the original, pre-#16(a) behaviour) does not — it
+  // scores the signature's 4 phones + 1 email the same as it would score a
+  // customer table with the same total, and fires on both or neither.
+  //
+  // Arm (a) alone (the #16(a) fix) already kept the signature silent — one
+  // category (phone) never exceeds the threshold on its own — but it also
+  // went silent on a genuinely bulk 3-row customer table, since no single
+  // category in 3 rows reaches 5 either. Arm (b) recovers exactly that case
+  // without reopening the signature false positive: the signature's phone
+  // category alone clears CROSS_CATEGORY_MIN, but its email category (1)
+  // never does, so only one category qualifies and breadth's "at least two"
+  // fails (ROADMAP §1.4 #16; fp-corpus.test.ts carries the signature
+  // fixture that must stay silent, the 5-distinct-email fixture that fires
+  // via arm (a), the 3-row customer-table fixture that fires via arm (b),
+  // and a 2-email+1-IBAN+1-phone+1-SVNR fixture — breadth without depth —
+  // that must stay silent under both arms).
   //
   // Counting uses `matches` (the raw, pre-allow-filter, post-exception
   // list), so an individually-allowed category (e.g. email: allow) still
@@ -185,7 +213,12 @@ export function evaluate(text: string, policy: Policy, host?: string): Evaluatio
       bucket.add(m.match);
     }
     const bulkThreshold = policy.bulkPiiThreshold ?? DEFAULT_BULK_PII_THRESHOLD;
-    const triggered = [...distinctByCategory.values()].some((bucket) => bucket.size >= bulkThreshold);
+    const crossCategoryMin = Math.max(2, Math.ceil(bulkThreshold / 2));
+    const categoryCounts = [...distinctByCategory.values()].map((bucket) => bucket.size);
+    const singleCategoryHit = categoryCounts.some((count) => count >= bulkThreshold); // arm (a)
+    const categoriesAtCrossMin = categoryCounts.filter((count) => count >= crossCategoryMin).length;
+    const crossCategoryHit = categoriesAtCrossMin >= 2; // arm (b)
+    const triggered = singleCategoryHit || crossCategoryHit;
     if (triggered) {
       const bulkAction: Action = bulkRule.action;
       if (bulkAction === "redact") {

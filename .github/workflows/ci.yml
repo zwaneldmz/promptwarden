@@ -48,7 +48,14 @@ jobs:
           # below: apps/cli/src/mcp/gateway.ts spawns the real MCP server it
           # proxies stdio for. No other file in any target may use it.
           CHILD_PROCESS_PATTERN='child_process|execSync|spawnSync|createRequire'
-          CHILD_PROCESS_EXCEPTION="apps/cli/src/mcp/gateway.ts"
+          # The source file with the reviewed spawn, plus the bundles built
+          # from it — apps/cli/dist/cli.js bundles every subcommand, so it
+          # necessarily contains the gateway's import too. Excepting a bundle
+          # does not widen the carve-out: every OTHER file under apps/cli/src
+          # is still scanned individually, so a spawn smuggled into any other
+          # module is caught at source even though it would also land in the
+          # bundle. The network patterns still apply to all three.
+          CHILD_PROCESS_EXCEPT_RE='^(apps/cli/src/mcp/gateway\.ts|apps/cli/dist/mcp/gateway\.js|apps/cli/dist/cli\.js):'
 
           # Built output is scanned alongside source: the bundle is what
           # actually runs, and a build step could in principle introduce a
@@ -93,16 +100,15 @@ jobs:
             fi
           done
 
-          echo "Scanning for child_process usage (reviewed carve-out: $CHILD_PROCESS_EXCEPTION): $CHILD_PROCESS_PATTERN"
+          echo "Scanning for child_process usage (reviewed carve-out: $CHILD_PROCESS_EXCEPT_RE): $CHILD_PROCESS_PATTERN"
           for t in "${TARGETS[@]}"; do
             if [ ! -e "$t" ]; then
               continue # already reported as missing above
             fi
             if [ -f "$t" ]; then
-              if [ "$t" = "$CHILD_PROCESS_EXCEPTION" ]; then
-                continue
-              fi
-              if grep -nE "$CHILD_PROCESS_PATTERN" "$t"; then
+              MATCHES="$(grep -nE "$CHILD_PROCESS_PATTERN" "$t" | sed "s|^|$t:|" | grep -vE "$CHILD_PROCESS_EXCEPT_RE" || true)"
+              if [ -n "$MATCHES" ]; then
+                echo "$MATCHES"
                 FOUND=1
               fi
             else
@@ -110,7 +116,7 @@ jobs:
               # came from the one excepted file — every other file under the
               # directory (including every other file in apps/cli/src) is
               # still fully checked.
-              MATCHES="$(grep -rnE "$CHILD_PROCESS_PATTERN" "$t" | grep -v "^${CHILD_PROCESS_EXCEPTION}:" || true)"
+              MATCHES="$(grep -rnE "$CHILD_PROCESS_PATTERN" "$t" | grep -vE "$CHILD_PROCESS_EXCEPT_RE" || true)"
               if [ -n "$MATCHES" ]; then
                 echo "$MATCHES"
                 FOUND=1

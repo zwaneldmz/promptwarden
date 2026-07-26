@@ -181,12 +181,12 @@ omitted deliberately — they rot; the named symbol is the anchor.
     required positives. `packages/policy-engine/src/detectors.ts`,
     `packages/policy-engine/test/fp-corpus.test.ts` — **1d**
 
-15. **`CARD_CANDIDATE` eats one trailing separator.** `/\b(?:\d[ -]?){13,19}\b/g` lets the last
-    repetition consume a space or hyphen, so the match span extends one char past the number
-    (verified: span 12–29 on a 16-digit card at offset 12; redaction yields
-    `[REDACTED:CARD]and email`). Cosmetic in the browser; in a `PreToolUse` `updatedInput`
-    rewrite of a shell command an eaten space changes meaning.
-    `packages/policy-engine/src/detectors.ts` — **30m**
+15. ~~**`CARD_CANDIDATE` eats one trailing separator.**~~ **Done.** The last repetition of
+    `/\b(?:\d[ -]?){13,19}\b/g` could consume a space or hyphen, extending the match span one
+    char past the number, so a `redact` action produced `[REDACTED:CARD]and email`. Cosmetic in
+    the browser, but in a `PreToolUse` `updatedInput` rewrite of a shell command an eaten space
+    changes meaning. The pattern now ends on a digit; regression test in
+    `packages/policy-engine/test/fp-corpus.test.ts`.
 
 16. **`bulk_pii` fires on an ordinary email signature under both shipped profiles, and inherits
     `defaultAction` when unconfigured.** Distinctness is over raw match *strings*, so

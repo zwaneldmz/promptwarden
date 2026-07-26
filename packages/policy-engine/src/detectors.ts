@@ -33,7 +33,13 @@ function luhnValid(digits: string): boolean {
   return sum % 10 === 0;
 }
 
-const CARD_CANDIDATE = /\b(?:\d[ -]?){13,19}\b/g;
+// Anchored to start and end on a digit: `(?:\d[ -]?){13,19}` would let the
+// final repetition consume a trailing space or hyphen, so the match span —
+// and therefore the text a `redact` action replaces — swallowed the
+// separator after the card ("[REDACTED:CARD]on file"). Written as one digit
+// followed by 12–18 more, each optionally separator-prefixed, the span can
+// only ever end on a digit while still accepting 13–19 digit cards.
+const CARD_CANDIDATE = /\b\d(?:[ -]?\d){12,18}\b/g;
 
 // Issuer/BIN prefix gating: a long numeric string that passes Luhn (order
 // numbers, tracking numbers, EAN-13 barcodes all can) is only treated as a

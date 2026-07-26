@@ -162,6 +162,35 @@ test("IBAN: a country other than Austria is still recognized (per-country length
   assert.equal(r.findings.some((f) => f.detector === "iban"), true);
 });
 
+/* --------------------------- credit_card match span ----------------------------------- */
+
+test("credit_card: the match span ends on a digit, so redaction does not eat the following separator", () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "card-span",
+    hosts: ["chatgpt.com"],
+    defaultAction: "allow",
+    logging: "event",
+    rules: [{ detector: "credit_card", action: "redact" }],
+  });
+  // The old pattern `(?:\d[ -]?){13,19}` let the final repetition consume a
+  // trailing space or hyphen, producing "[REDACTED:CARD]on file" — visible in
+  // rewritten tool input and in the browser's redact-and-continue path.
+  for (const separator of [" ", "-"]) {
+    const text = `card 4532${separator}0151${separator}1283${separator}0366 on file`;
+    const r = evaluate(text, policy);
+    assert.equal(r.redactedText, "card [REDACTED:CARD] on file", `separator ${JSON.stringify(separator)}`);
+    const f = r.findings.find((x) => x.detector === "credit_card");
+    assert.ok(f, "expected a credit_card finding");
+    assert.equal(/[ -]$/.test(f.match), false, `match must not end on a separator: ${JSON.stringify(f.match)}`);
+  }
+  // Both digit-count boundaries still detected: 13 and 19 (Luhn-valid, Visa prefix).
+  for (const digits of ["4111111111119", "4555555555111111119"]) {
+    const r = evaluate(`num ${digits} end`, policy);
+    assert.equal(r.redactedText, "num [REDACTED:CARD] end", `${digits.length}-digit card`);
+  }
+});
+
 /* ------------------------------- credit_card BIN gating ------------------------------- */
 
 test("credit_card BIN gating: Luhn-valid but non-issuer-prefixed numbers are not flagged", () => {

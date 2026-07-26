@@ -64,14 +64,13 @@ Code":
   can simply delete the hook entry. The enforcement floor for a fleet is managed settings
   (organization-level hook configuration a user's own settings cannot remove), the same
   floor-vs-default distinction as the browser extension's managed storage.
-- **A known engine bug that specifically bites the redaction channel this hook depends on**:
-  `CARD_CANDIDATE`'s trailing-separator issue (`docs/ROADMAP.md` §1.4 item 15) means a
-  `redact`-action card match can eat one trailing space or hyphen in `updatedInput`, so
-  `"card=4532... 0366 https://x"` can become `"card=[REDACTED:CARD]https://x"` — a missing
-  space, not a missing redaction. Cosmetic in the browser; in a rewritten shell command this
-  can change what actually runs. That fix lives in `packages/policy-engine/src/detectors.ts`,
-  outside this hook's ownership; flagging it here because this is the surface where it matters
-  most.
+- **Fixed:** `CARD_CANDIDATE` used to include a trailing space or hyphen in the match span, so
+  a `redact` action rewrote `"card=4532... 0366 https://x"` to
+  `"card=[REDACTED:CARD]https://x"` — a missing space, not a missing redaction. Cosmetic in the
+  browser, but in a rewritten shell command it could change what actually runs, which is why it
+  mattered most on this surface. The pattern now ends on a digit
+  (`packages/policy-engine/src/detectors.ts`), with a regression test in
+  `test/fp-corpus.test.ts`.
 
 ## Fail-open by design
 
@@ -224,9 +223,10 @@ Two things that testing made obvious:
 - **Ordering.** `UserPromptSubmit` fires first, so a prompt that itself contains sensitive data
   is rejected before any tool runs. Testing the `PreToolUse` path therefore requires input the
   *model* produces, not input you type.
-- **Redaction eats an adjacent separator.** `[REDACTED:CARD]on file` lost the space after the
-  card, because the card detector's match includes a trailing separator. Cosmetic, but visible
-  in rewritten tool input.
+- **Redaction used to eat an adjacent separator.** The rewritten input read
+  `[REDACTED:CARD]on file` — the card pattern's final optional separator was inside the match
+  span. Fixed in `detectors.ts` (the span can only end on a digit); rewritten input now reads
+  `[REDACTED:CARD] on file`, covered by a regression test.
 
 ## Policy choice for a repo whose tests contain fixtures
 

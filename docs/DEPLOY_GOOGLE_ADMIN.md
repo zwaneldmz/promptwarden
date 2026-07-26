@@ -11,8 +11,7 @@ Windows/Intune-managed fleets and `DEPLOY_GPO.md` for on-prem Active Directory.
 - A Google Workspace / Chrome Enterprise Admin console with Chrome browser management
   enabled for the target org unit.
 - The PromptWarden **Chrome Web Store extension ID**. As of this writing the Chrome Web Store
-  listing has not shipped yet — submission is planned for W2 of
-  [`docs/NEXT_PLAN.md`](NEXT_PLAN.md) ("unlisted", once the privacy-policy URL is live). Until
+  listing has not shipped yet. Until
   then, use `<PROMPTWARDEN_EXTENSION_ID>` as a placeholder everywhere below and replace it
   once the store assigns a real ID — **do not** substitute a self-hosted CRX's extension ID
   here; those are different IDs (see `DEPLOY_SELF_HOSTED_CRX.md`) and force-installing the

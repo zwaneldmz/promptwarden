@@ -1,90 +1,56 @@
-# PromptWarden — Engineering Plan
+# PromptWarden — Architecture & Engineering Ground Rules
 
-Plan authored by Claude Fable 5, incorporating the panel review of 2026-07-25. Model roles for the product's AI tier are assigned to Claude Sonnet 4.6 and Claude Opus 4.8 (there is no "Sonnet 5"/"Opus 5"; these are the current API models).
+An open-source, browser-first guardrail that warns, redacts, or blocks sensitive data
+(credit cards, IBANs, social-insurance numbers, API keys, bulk PII) before it leaves the
+browser for AI chat sites. Everything runs locally; nothing ever leaves the device.
 
-## Product thesis
-
-An open-source, browser-first AI data guardrail for SMBs handling sensitive customer data, sold through MSPs, with EU-native privacy defaults. The inline path is deterministic and local; LLMs appear only in the opt-in, batch audit tier.
-
-## Revised architecture (post-panel)
+## Architecture
 
 ```
-┌────────────────────────────┐        ┌──────────────────────────────┐
-│  Browser (employee device) │        │  Console (paid, multi-tenant)│
-│  ┌──────────────────────┐  │  HTTPS │  MSP → Org → Profile → Device│
-│  │ MV3 extension        │◄─┼────────┤  Policy CRUD + signing       │
-│  │  content script      │  │ policy │  Event ingest (pseudonymous) │
-│  │  policy engine (OSS) │──┼───────►│  Compliance exports          │
-│  │  guardrail UI        │  │ events │  AI audit tier (opt-in)      │
-│  └──────────────────────┘  │        │   Sonnet 4.6: classification │
-│  Managed storage ◄─ GPO/   │        │   Opus 4.8: weekly synthesis │
-│  Google Admin force-install│        └──────────────────────────────┘
-└────────────────────────────┘
+┌──────────────────────────────────────┐
+│  Browser (user's device)             │
+│  ┌────────────────────────────────┐  │
+│  │ MV3 extension                  │  │
+│  │  content script (selector-less │  │
+│  │   interception: enter, click,  │  │
+│  │   paste, file upload, drop)    │  │
+│  │  policy engine (pure TS)       │  │
+│  │  guardrail UI                  │  │
+│  │  popup: event log + aggregate  │  │
+│  │   export (day-bucketed counts) │  │
+│  └────────────────────────────────┘  │
+│  Policy: managed storage (admin) >   │
+│  local storage > built-in default    │
+│  Events: chrome.storage.local only — │
+│  no ingest endpoint exists           │
+└──────────────────────────────────────┘
 ```
 
-Explicitly cut from v1 (panel decision): device-level TLS-intercepting agent (cert pinning + 3-OS maintenance economics), self-hosted console at launch (becomes paid enterprise tier in phase 4+), direct-to-SMB sales motion as primary.
-
-## Open/paid boundary
-
-Free (Apache-2.0 or MPL-2.0 — decide before first release):
-- `packages/policy-engine` — schema, detectors, evaluation, privacy-aware logging
-- `apps/extension` — full interception + guardrail UX, local policy file, managed-storage support
-- Example profiles
-
-Paid:
-- Multi-tenant console (MSP roles, SSO/SCIM, policy signing + distribution)
-- Central event ingest, dashboards, compliance evidence exports (GDPR/HIPAA-adjacent)
-- AI audit tier (below)
-- DPIA template + Austrian works-council (ArbVG §96) agreement template
-- Self-hosted console (enterprise tier, later)
-
-Boundary rule: anything a single privacy-conscious individual needs is free; anything that only makes sense when managing other people is paid.
-
-## Phases
-
-### Phase 0 — Policy engine (weeks 1–2) ✅ built in this session
-- Policy schema v1: hosts, rules, actions (allow/warn/redact/block), logging modes (off/event/content)
-- Detectors with checksum validation: credit card (Luhn), IBAN (mod-97), Austrian SVNR (check digit), structured API keys, email, phone
-- Custom regex rules for org-specific identifiers
-- `toLogRecord` as the single privacy gate — event mode provably contains no content (tested)
-- 20 passing tests; CI (`.github/workflows/ci.yml`): `npm test` (builds the engine, runs
-  `node --test`, includes the <10ms benchmark gate), `npm run build:extension` (esbuild), and a
-  no-egress gate that greps the extension/engine source and the built bundles for
-  `fetch`/`XMLHttpRequest`/`sendBeacon`/`WebSocket`/`EventSource`/dynamic `import()` and fails
-  the build if any are found
-
-### Phase 1 — Extension (weeks 3–6) ✅ skeleton built in this session
-- MV3, selector-less interception (capture-phase Enter + generic submit-button click)
-- Policy precedence: managed storage > local; managed schema for Google Admin / GPO
-- Guardrail UI: redact-and-continue / send-anyway / cancel; block state for hard stops
-- Remaining for GA: paste-event scanning, file-upload interception, Firefox port,
-  breakage telemetry dashboarding, signed policy verification (Ed25519), Web Store listing,
-  force-install deployment docs for Google Admin and Intune
-- Latency budget: < 10 ms evaluation on 10 KB prompts (measure in CI with a benchmark)
-
-### Phase 2 — Console (weeks 5–10)
-- Stack: Next.js + Postgres (row-level security for tenancy), hosted in EU region
-- Tenancy model from migration 001: `msp → organization → profile → enrollment`
-- Policy editor with live preview against sample prompts; versioned, signed policy documents
-- Event ingest: batched, pseudonymous device ids, retention configurable per org (default 90 days)
-- SSO (OIDC) for admins; SCIM deferred to phase 4
-
-### Phase 3 — AI audit tier + pilot (weeks 9–12)
-- Opt-in per org, off by default, requires `logging: "content"` legal basis acknowledgment
-- Claude Sonnet 4.6 (batch): classify events into risk categories (customer PII, financial,
-  credentials, contract text), estimate severity — high volume, low unit cost, prompt-cached
-- Claude Opus 4.8 (weekly): synthesize the compliance narrative per org, propose policy
-  tightening ("3 users repeatedly warn-bypassed IBAN sends → suggest redact"), draft the
-  MSP-facing monthly report — low volume, high judgment
-- Design-partner pilot: 2 MSPs or 3 direct orgs, 50+ seats
-
-### Kill criterion
-If by **2026-10-31** no two MSPs or three design-partner orgs have committed to a 50+ seat
-pilot, stop building and re-validate the go-to-market before writing more code.
+- `packages/policy-engine` — policy schema, detectors (checksum-validated: Luhn + issuer
+  prefixes for cards, mod-97 for IBANs, check digit for Austrian SVNR), evaluation,
+  `toLogRecord` as the single privacy gate, `bulk_pii` post-pass, Office (`.xlsx`/`.docx`)
+  text extraction. Pure, DOM-free, dependency-free.
+- `apps/extension` — MV3 extension: capture-phase interception with zero site-specific
+  selectors, guardrail dialogs, managed-storage policy support, dynamic host coverage
+  (`docs/HOST_COVERAGE.md`), popup with event log and k-anonymity-friendly aggregate export.
+- `profiles/` — example policy documents.
+- `tools/e2e-smoke.mjs` — live-browser regression against real AI sites.
 
 ## Engineering ground rules
-- The inline path never calls a network or an LLM. Ever.
-- All privacy decisions route through `toLogRecord`; new logging surfaces are PR-blocked
-  unless they use it.
-- No site-specific CSS selectors in the content script; breakage telemetry is category-level only.
-- Signed releases + SECURITY.md + disclosure policy from the first public tag.
+
+- **The inline path never calls a network or an LLM. Ever.** Deterministic, <10 ms on a
+  10 KB prompt (enforced by a CI bench gate; currently ~0.06 ms).
+- **All privacy decisions route through `toLogRecord`** — new logging surfaces are
+  PR-blocked unless they use it. Event mode provably contains no content (tested).
+- **Zero egress is machine-verified**: CI greps source and built bundles for every network
+  API and fails the build on a hit. `permissions: ["storage"]`, `host_permissions: []`.
+- **No site-specific CSS selectors in the content script** — interception is generic
+  (word-predicate send buttons, capture-phase events), so AI-site redesigns don't break it.
+- **No new runtime dependencies.** The extension and engine use platform APIs only.
+- Signed releases + `SECURITY.md` + coordinated disclosure from the first public tag.
+
+## Status
+
+Engine and extension are functional and live-verified (see `tools/e2e-smoke.mjs`). Not yet
+scanned: PDF and legacy binary Office formats (documented in `docs/THREAT_MODEL.md`).
+Store listings not yet published. See open issues for the roadmap.

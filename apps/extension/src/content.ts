@@ -152,7 +152,7 @@ function onSubmitAttempt(e: Event, editable: HTMLElement, trigger: SubmitTrigger
   const result = evaluate(text, policy);
   if (result.findings.length === 0) return;
 
-  // Observe-only result (Exposure Check mode): the policy wants a record,
+  // Observe-only result (silent baseline mode): the policy wants a record,
   // not an interruption — log and let the send proceed untouched.
   if (!result.blocked && !result.needsWarning && result.redactedText === text) {
     log(result);

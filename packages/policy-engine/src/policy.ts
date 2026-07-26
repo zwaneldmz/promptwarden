@@ -9,7 +9,7 @@
 /** What the engine should do when a detector fires. */
 export type Action =
   | "allow" // record nothing, let it through
-  | "observe" // record the finding, never interrupt — the Exposure Check mode
+  | "observe" // record the finding, never interrupt — silent baseline mode
   | "warn" // let the user decide; show what was found
   | "redact" // replace the finding with a placeholder before send
   | "block"; // prevent submission entirely

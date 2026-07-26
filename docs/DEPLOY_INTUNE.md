@@ -19,9 +19,8 @@ the install, (2) push the managed policy JSON. Do both for either browser you ta
   issued, see the same caveat as `DEPLOY_GOOGLE_ADMIN.md`) and, separately, the **Edge
   Add-ons extension ID** (`<PROMPTWARDEN_EDGE_EXTENSION_ID>` — Edge and Chrome Web Store
   listings get different extension IDs even for identical code, because the ID is derived
-  from the store's own signing key, not the extension's). Per
-  [`docs/NEXT_PLAN.md`](NEXT_PLAN.md), Edge submission is W1, Chrome Web Store submission is
-  W2 — check actual status before deploying.
+  from the store's own signing key, not the extension's). Neither store listing has shipped
+  yet — check actual status before deploying.
 
 ## Step 1 — Force-install (Settings Catalog)
 

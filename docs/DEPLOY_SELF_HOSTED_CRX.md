@@ -5,9 +5,7 @@
 Force-installs Chrome/Edge only accept a store URL or an update URL you host — Chrome and
 Edge do not allow force-installing an arbitrary local `.crx` file directly. This doc packs
 PromptWarden with your own signing key and serves the update manifest a self-hosted deploy
-needs, so a pilot's install never depends on Chrome Web Store or Edge Add-ons review timing
-([`docs/NEXT_PLAN.md`](NEXT_PLAN.md) W3: "self-hosted CRX fallback so pilots never depend on
-store review").
+needs, so an install never depends on Chrome Web Store or Edge Add-ons review timing.
 
 **Read the warning at the bottom before you start** — a self-hosted build and a store build
 of the same source are two different extension IDs, and mixing them in one tenant breaks

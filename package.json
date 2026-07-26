@@ -9,7 +9,7 @@
   "scripts": {
     "build:engine": "cd packages/policy-engine && ../../node_modules/.bin/tsc",
     "typecheck": "node_modules/.bin/tsc -p apps/extension/tsconfig.json --noEmit",
-    "test": "npm run build:engine && cd packages/policy-engine && node --test 'dist/test/*.test.js' && cd ../.. && node --test tools/pwreport.test.mjs",
+    "test": "npm run build:engine && cd packages/policy-engine && node --test 'dist/test/*.test.js'",
     "build:extension": "esbuild apps/extension/src/content.ts --bundle --format=iife --outfile=apps/extension/content.bundle.js --alias:@promptwarden/policy-engine=./packages/policy-engine/src/index.ts && esbuild apps/extension/src/background.ts --bundle --format=iife --outfile=apps/extension/background.js",
     "smoke": "node tools/e2e-smoke.mjs"
   },

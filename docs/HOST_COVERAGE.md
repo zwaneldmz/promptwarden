@@ -8,31 +8,29 @@ see "The other half: `hostMatches()` and `policy.hosts`" below for the one remai
 manual step (mirroring the same origins into the policy document's `hosts` array), which
 this doc's scope does not automate.
 
-## Council finding this answers
+## The problem this answers
 
-G5 (`docs/NEXT_PLAN.md`) measures exposure — sensitive-data hits per user per week — as
-evidence the pain PromptWarden addresses is real. As shipped, that measurement runs against
-exactly 7 hardcoded hosts (`content_scripts[0].matches` in `apps/extension/manifest.json`).
-That is a 7-host allowlist's exposure rate, not the market's: any org whose staff use an
-internal chat gateway, a self-hosted LLM UI, or a vendor tool outside the 7 contributes zero
-measured exposure regardless of actual risk. A pilot evaluator who asks "what about our
-internal tool?" cannot be answered with "wait for the next Chrome Web Store review cycle" —
-that's a multi-day-to-multi-week delay against a sales conversation happening this week.
+Any exposure measurement (sensitive-data hits per user per week) runs against exactly the
+hosts the extension is registered on — by default the 7 hardcoded ones in
+`content_scripts[0].matches` (`apps/extension/manifest.json`). That is a 7-host allowlist's
+exposure rate, not the real one: an org whose staff use an internal chat gateway, a
+self-hosted LLM UI, or a vendor tool outside the 7 contributes zero measured exposure
+regardless of actual risk. An admin who asks "what about our internal tool?" should not have
+to wait for the next store review cycle — that's a multi-day-to-multi-week delay.
 
 ## Why the default is 7 hosts, not `https://*/*`, by default
 
 `host_permissions: []` plus a 7-origin `content_scripts.matches` list is a deliberate,
 narrow **required** permission grant:
 
-- The Chrome Web Store install prompt and the enterprise admin's permission-review screen
-  both read the required permission surface, not the optional one. A required `https://*/*`
-  reads, to a reviewer or a DPO, as "this extension can inject into every page you visit" —
-  it invites exactly the store-review friction and the works-council/DPO hesitation the rest
-  of this plan is designed to avoid (`docs/NEXT_PLAN.md` thesis: zero-egress and a narrow
-  permission footprint are the moat).
-- A named, auditable host list is also what the trust pack and the exposure reports lean on:
-  "PromptWarden scanned these 7 named AI chat sites" is a sentence a DPO can verify by
-  reading the manifest. "PromptWarden can run anywhere" is not.
+- The Chrome Web Store install prompt and any admin's permission-review screen both read
+  the required permission surface, not the optional one. A required `https://*/*` reads, to
+  a reviewer or a privacy officer, as "this extension can inject into every page you visit"
+  — store-review friction and user hesitation the narrow footprint avoids. Zero-egress plus
+  a narrow permission footprint is the project's identity.
+- A named, auditable host list is also verifiable: "PromptWarden scans these 7 named AI chat
+  sites" is a sentence anyone can check by reading the manifest. "PromptWarden can run
+  anywhere" is not.
 
 So the 7-host list stays the **required, install-time** default. Coverage beyond it is
 **optional and runtime-granted**, per host, with the admin (or, in standalone mode, the
@@ -237,11 +235,11 @@ way `resolvePolicy()` reads `policy`. Callers just call it with no arguments.)
 
 ## Reporting requirement
 
-**Any G5 exposure report (or any exposure number quoted in a sales or trust-pack context)
-must name the host coverage it ran with** — "7 default hosts" vs "7 default + N admin-added
-hosts, granted on [date] and mirrored into policy.hosts." Coverage is not fixed across the
-pilot's lifetime now that `extraHosts` registration is live: a number from before a coverage
-grant and a number from after are not comparable, and presenting them as if they were
+**Any exposure report must name the host coverage it ran with** — "7 default hosts" vs
+"7 default + N admin-added hosts, granted on [date] and mirrored into policy.hosts."
+Coverage is not fixed over time now that `extraHosts` registration is live: a number from
+before a coverage grant and a number from after are not comparable, and presenting them as
+if they were
 overstates either the improvement or the baseline. A granted-but-not-policy-mirrored host
 (see "The other half" above) contributes **zero** measured exposure even though the content
 script is running there — a report must not claim coverage for a host that was only

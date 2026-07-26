@@ -1,55 +1,66 @@
 # PromptWarden
 
-Open-source guardrails for AI chat. Warns, redacts, or blocks sensitive customer
-data (IBANs, card numbers, social insurance numbers, API keys, org-specific IDs)
-before it leaves the browser for ChatGPT, Claude, Gemini, Copilot, and others.
-File uploads are scanned too, including text files and Office Open XML
-attachments (.xlsx, .docx), all locally and without a network call.
+Browser guardrails for AI chat. PromptWarden warns, redacts, or blocks
+sensitive data (IBANs, card numbers, social insurance numbers, API keys,
+org-specific IDs) before it leaves the browser for ChatGPT, Claude, Gemini,
+Copilot, and others. File uploads are scanned too, including plain text and
+Office Open XML attachments (.xlsx, .docx) — all locally, with no network
+call.
 
-Built browser-first for SMBs and the MSPs who serve them. Privacy-preserving by
-default: standalone mode logs nothing; managed mode defaults to event-level
-records that provably contain no prompt content.
+## How it works
+
+A content script intercepts submit actions (Enter, click-to-send, paste) on
+supported chat sites before the text is sent. Each candidate string runs
+through a dependency-free detector library (Luhn/issuer-prefix credit card
+check, IBAN mod-97, API key patterns, and more) evaluated against a policy
+that decides warn, redact, or block per data type. Logging defaults to off
+and, where a managed policy turns it on, is privacy-gated to structured
+event records (category + host + timestamp) that provably contain no prompt
+text.
+
+## Install
+
+The extension isn't yet published to the Chrome Web Store. To run it
+locally:
+
+1. `npm install` and build (see [Build](#build) below).
+2. Open `chrome://extensions`, enable Developer mode.
+3. Click "Load unpacked" and select `apps/extension/`.
+4. Type a Luhn-valid test card number into a supported chat site and press
+   Enter to see the guardrail.
 
 ## Repository layout
 
 ```
-packages/policy-engine   Dependency-free TS library: policy schema, detectors
-                         (Luhn + issuer-prefix credit card, IBAN mod-97, AT
-                         SVNR check digit, API keys, bulk_pii), evaluation,
-                         privacy-gated logging. Tested (`npm test`).
-apps/extension           Manifest V3 extension: selector-less interception,
+packages/policy-engine   Dependency-free TS library: policy schema, detectors,
+                         evaluation, privacy-gated logging. Tested (`npm test`).
+apps/extension           Manifest V3 extension: content-script interception,
                          guardrail UI, managed-storage policy support.
-profiles/                Example org profiles (healthcare, accounting).
-docs/                    Engineering plan and architecture notes.
+profiles/                Example org policy profiles.
+docs/                    Architecture notes.
 ```
 
-## Build & test
+## Build
 
 ```bash
 npm install
-(cd packages/policy-engine && ../../node_modules/.bin/tsc && node --test 'dist/test/*.test.js')
-node_modules/.bin/esbuild apps/extension/src/content.ts --bundle --format=iife \
-  --outfile=apps/extension/content.bundle.js \
-  --alias:@promptwarden/policy-engine=./packages/policy-engine/src/index.ts
-node_modules/.bin/esbuild apps/extension/src/background.ts --bundle --format=iife \
-  --outfile=apps/extension/background.js
+npm run build:engine
+npm run typecheck
+npm run build:extension
+npm test
 ```
-
-Load `apps/extension/` as an unpacked extension in Chrome (chrome://extensions,
-Developer mode). Type a Luhn-valid test card number into ChatGPT and press Enter
-to see the guardrail.
 
 ## Managed deployment
 
-Admins push a policy via Chrome Enterprise managed storage (Google Admin console
-or Group Policy) using the `policy` key defined in
-`apps/extension/managed_schema.json`. Managed policy always wins over local.
+Admins can push a policy via Chrome Enterprise managed storage (Google Admin
+console or Group Policy) using the `policy` key defined in
+`apps/extension/managed_schema.json`. Managed policy always overrides local
+settings.
 
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The "PromptWarden"
-name is governed separately — see [TRADEMARKS.md](TRADEMARKS.md). Console and
-audit tier (not yet built) are planned as separate, commercial components.
+name is governed separately — see [TRADEMARKS.md](TRADEMARKS.md).
 
 ## Security
 

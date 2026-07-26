@@ -1,36 +1,27 @@
 /**
- * Text extraction for Office Open XML uploads (.xlsx / .docx).
+ * Text extraction for Office Open XML uploads (.xlsx / .docx). Both formats
+ * are ZIP containers of XML parts; this is a minimal, dependency-free ZIP
+ * reader (no DOM, no network, nothing beyond `DecompressionStream`) that
+ * locates the XML parts holding document text, inflates them, strips markup
+ * down to text, and hands the result to the same `evaluate()` flow as any
+ * other file. Never throws, even on malformed input.
  *
- * Both formats are ZIP containers of XML parts. This module is a minimal,
- * pure, dependency-free ZIP reader — no DOM, no network, nothing beyond the
- * platform's native `DecompressionStream` — that locates the handful of XML
- * parts that hold document text, inflates them, strips markup down to text,
- * and hands the result to the same `evaluate()` flow as any other file. It
- * never talks to the network and it is safe to run on untrusted bytes: see
- * the hardening notes below.
+ * Central-directory sizes (see APPNOTE.TXT) are trusted over the local file
+ * header's own size fields: entries written with a streaming data
+ * descriptor (general purpose flag bit 3) leave the local header's sizes at
+ * zero, but the central directory's are always accurate.
  *
- * ZIP layout used here (see APPNOTE.TXT for the full spec): an end-of-
- * central-directory (EOCD) record near the end of the file points at a
- * central directory, whose entries carry each part's name, compression
- * method, and (crucially) its accurate compressed/uncompressed sizes and the
- * offset of its local file header. Central-directory sizes are trusted
- * instead of the local header's own size fields, which is what makes this
- * correct even for entries written with a streaming data descriptor (general
- * purpose flag bit 3) — the local header's size fields may be zero in that
- * case, but the central directory's never are.
- *
- * Hardening (this parses untrusted, attacker-controlled bytes):
- *  - the central directory is capped at MAX_CENTRAL_DIRECTORY_ENTRIES;
- *  - each entry's inflate output is capped at MAX_ENTRY_INFLATED_BYTES by
- *    aborting the decompression stream once exceeded, regardless of what the
- *    entry's header claims its uncompressed size is (that field is never
- *    trusted for allocation — only the actual bytes produced count);
- *  - the running total of extracted text across every part is capped at
+ * Hardening against attacker-controlled bytes:
+ *  - central directory capped at MAX_CENTRAL_DIRECTORY_ENTRIES;
+ *  - each entry's inflate output capped at MAX_ENTRY_INFLATED_BYTES, aborting
+ *    the decompression stream once exceeded — the entry's claimed
+ *    uncompressed size is never trusted for allocation, only actual bytes
+ *    produced count (this is what stops a zip bomb);
+ *  - running total of extracted text across all parts capped at
  *    MAX_TOTAL_EXTRACTED_BYTES, mirroring file-scan.ts's MAX_TEXT_FILE_BYTES;
  *  - encrypted entries (general purpose flag bit 0) are skipped silently;
- *  - nothing here ever throws on malformed input — every failure mode
- *    (truncated file, bad signature, out-of-range offsets, unsupported
- *    compression method) returns null or an empty result instead.
+ *  - malformed input (truncated file, bad signature, out-of-range offsets,
+ *    unsupported compression method) returns null instead of throwing.
  */
 
 /* -------------------------------- limits --------------------------------- */
@@ -150,7 +141,7 @@ function concatChunks(chunks: Uint8Array[], totalLength: number): Uint8Array {
  * Inflate `compressed` with the native DecompressionStream, streaming so
  * output can be aborted the moment it exceeds MAX_ENTRY_INFLATED_BYTES —
  * this is what makes the cap effective against a small-input/huge-output zip
- * bomb, since we never pre-allocate based on any declared uncompressed size.
+ * bomb: allocation is never based on the declared uncompressed size.
  */
 async function inflateCapped(compressed: Uint8Array): Promise<Uint8Array | null> {
   try {
@@ -337,8 +328,8 @@ export async function extractXlsxText(bytes: Uint8Array): Promise<string | null>
       const data = await readEntryData(bytes, entry);
       if (!data) continue;
       // Shared strings hold <t> text; sheets hold both inline <is><t> text
-      // and raw <v> cell values — a plain tag-strip captures all of them
-      // uniformly, since we keep every text node and only tags are removed.
+      // and raw <v> cell values. A plain tag-strip captures all of them
+      // uniformly: every text node is kept and only tags are removed.
       const text = stripXmlToText(decodeUtf8(data)).slice(0, budget);
       if (text.length === 0) continue;
       texts.push(text);

@@ -1,6 +1,6 @@
 # Deploying PromptWarden via Windows Group Policy (on-prem AD)
 
-**Verified: pending — needs a real managed tenant (founder action W3).**
+**Note:** not yet verified against a real managed tenant; treat the steps below as unconfirmed until tested end-to-end.
 
 For on-prem Active Directory fleets. If the fleet is Intune-managed instead, use
 `DEPLOY_INTUNE.md` — the underlying registry paths below are identical, only the delivery

@@ -72,14 +72,12 @@ export function evaluate(text: string, policy: Policy): EvaluationResult {
 
   // bulk_pii post-pass: N+ distinct PII strings in one payload reads as
   // "someone pasted our whole customer list," even when every individual
-  // category is allow-listed on its own. Counting happens on `matches` — the
-  // raw, pre-allow-filter list built above — so an individually-allowed
-  // email still counts toward the threshold; only the synthesized bulk_pii
-  // finding's own action (resolved the same way as any other detector: a
-  // "bulk_pii" rule entry, else defaultAction) decides whether it survives.
-  // Added directly to `kept` *after* the containment pass above so a
-  // whole-text bulk_pii span never swallows the individual findings that
-  // justified it.
+  // category is allow-listed on its own. Counting uses `matches` (the raw,
+  // pre-allow-filter list), so an individually-allowed email still counts
+  // toward the threshold; the synthesized bulk_pii finding's own action is
+  // resolved separately (its own rule entry, else defaultAction). Added to
+  // `kept` after the containment pass so a whole-text bulk_pii span never
+  // swallows the individual findings that justified it.
   const distinctBulkMatches = new Set(
     matches.filter((m) => BULK_PII_DETECTORS.has(m.detector)).map((m) => m.match),
   );
@@ -89,9 +87,9 @@ export function evaluate(text: string, policy: Policy): EvaluationResult {
     const bulkAction: Action = bulkRule ? bulkRule.action : policy.defaultAction;
     if (bulkAction === "redact") {
       // Redacting the whole-text span would wipe the entire prompt down to
-      // one label. Redact the contributing PII matches instead — one finding
-      // per distinct span that isn't already redacted/blocked by its own rule
-      // — so the surrounding legitimate text survives.
+      // one label. Redact the contributing PII matches instead: one finding
+      // per distinct span not already redacted/blocked by its own rule, so
+      // the surrounding legitimate text survives.
       const bulkLabel = bulkRule?.label ?? DEFAULT_LABELS.bulk_pii;
       const promoted = new Set<string>();
       for (const m of matches) {

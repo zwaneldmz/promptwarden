@@ -1,9 +1,9 @@
 /**
  * Built-in detectors. Each returns candidate spans; candidates are validated
- * (checksums where the format has them) to keep false positives low, because
- * the guardrail UX dies the day it cries wolf on an order number.
+ * (checksums where the format has them) so an order number or tracking id
+ * doesn't get misread as a card or IBAN.
  *
- * All detectors are pure, synchronous, and dependency-free — the inline path
+ * All detectors are pure, synchronous, and dependency-free: the inline path
  * must run in single-digit milliseconds on commodity hardware.
  */
 
@@ -35,12 +35,12 @@ function luhnValid(digits: string): boolean {
 
 const CARD_CANDIDATE = /\b(?:\d[ -]?){13,19}\b/g;
 
-// Issuer/BIN prefix gating: a long numeric string that happens to pass Luhn
-// (order numbers, tracking numbers, EAN-13 barcodes all can) is only treated
-// as a card if its leading digits also match a real issuer range — Visa (4),
-// Mastercard (51–55, and the newer 2221–2720 range approximated here as
-// 22–27), Amex (34, 37), Discover (6011). Luhn alone is not enough; the
-// guardrail UX dies the day it cries wolf on an order number.
+// Issuer/BIN prefix gating: a long numeric string that passes Luhn (order
+// numbers, tracking numbers, EAN-13 barcodes all can) is only treated as a
+// card if its leading digits also match a real issuer range: Visa (4),
+// Mastercard (51-55, and the newer 2221-2720 range approximated here as
+// 22-27), Amex (34, 37), Discover (6011). Luhn alone isn't enough to avoid
+// flagging ordinary numbers as cards.
 const ISSUER_PREFIX = /^(?:4|5[1-5]|2[2-7]|3[47]|6011)/;
 
 const creditCard: DetectorFn = (text) => {

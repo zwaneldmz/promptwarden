@@ -1,10 +1,9 @@
 # PromptWarden — Threat Model
 
-**Verified: pending — needs a real managed tenant (founder action W3).**
+**Note:** managed-deployment claims below are not yet verified against a real managed tenant.
 
-This document exists to be checked against the code, not taken on faith. Every claim below
-cites the file that makes it true or false. If the cited code changes and this document
-doesn't, this document is wrong — file an issue.
+Every claim below cites the file that implements it. If the cited code changes and this
+document doesn't, file an issue.
 
 ## What PromptWarden stops
 
@@ -38,9 +37,8 @@ every logging surface in the codebase (enforced by ground rule, see
 
 ## What PromptWarden does NOT stop
 
-Read this section before you trust the product. None of the following is a bug to be fixed
-in the current architecture — each is a boundary of what a browser extension can see or is
-scoped to see.
+None of the following is a bug to be fixed in the current architecture — each is a boundary
+of what a browser extension can see or is scoped to see.
 
 **Direct API access.** A user (or a script, or an internal tool) calling an AI provider's API
 directly — `curl`, a Python script, a backend integration — never touches a browser tab, so
@@ -97,8 +95,6 @@ process the user controls. Concretely:
   `disarmBypassNextSubmit`) — it is not a standing bypass, and a page script cannot forge a
   trusted (`isTrusted: true`) event to exploit the window, since only real user input disarms
   it and the flag only lets through the literal resumed submission, not arbitrary later ones.
-  This is documented here because it is exactly the kind of narrow, time-boxed exception a
-  reviewer should be able to find and check, not because it is currently exploitable.
 - In standalone (non-managed) mode, policy lives in `chrome.storage.local`
   (`apps/extension/src/background.ts::resolvePolicy`), which any extension the user installs
   with the right permissions, or the user via DevTools, can read or overwrite. Managed
@@ -127,18 +123,18 @@ node* from seeing the event, including the page's own.
 It does **not** create a sealed sandbox around the DOM itself: the isolated world still shares
 the live DOM with the page. Concretely, in the file-upload path
 (`apps/extension/src/content.ts::onFileInputEvent`), the browser has already populated
-`input.files` with the picked `FileList` by the time our capture-phase listener runs — holding
+`input.files` with the picked `FileList` by the time the capture-phase listener runs — holding
 the event (`stopImmediatePropagation`) only stops the page's *event handler* from firing while
 the guardrail evaluates the file; it does not hide `input.files` from a page script that reads
 it independently, e.g. by polling `input.files` on a timer rather than waiting for a `change`
 event. A page actively trying to observe an upload the guardrail is in the middle of
 evaluating has a window — typically well under a second, bounded by `scanFiles`'s read+evaluate
 time — in which it can read the held file directly. This is a structural property of how MV3
-isolated worlds relate to the DOM, not a bug in this codebase, and it is the honest limit of
-"held" in the file-upload dialog copy: held from the page's *submission* path, not hidden from
-a page script that goes looking.
+isolated worlds relate to the DOM, not a bug in this codebase: "held" in the file-upload
+dialog copy means held from the page's *submission* path, not hidden from a page script that
+goes looking.
 
-## Where these claims come from (check them yourself)
+## Where these claims come from
 
 | Claim | File |
 |---|---|

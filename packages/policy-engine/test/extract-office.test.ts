@@ -59,7 +59,7 @@ function buildZip(entries: ZipInputEntry[]): Uint8Array {
     le16(lv, 8, entry.method);
     le16(lv, 10, 0); // mod time
     le16(lv, 12, 0); // mod date
-    le32(lv, 14, 0); // crc32 (unchecked by our reader)
+    le32(lv, 14, 0); // crc32 (unchecked by the reader)
     le32(lv, 18, compressedSize);
     le32(lv, 22, uncompressedSize);
     le16(lv, 26, nameBytes.length);
@@ -227,7 +227,7 @@ test("an entry claiming a huge uncompressed size is capped, not OOM'd", async ()
       name: "word/document.xml",
       data,
       method: 0,
-      // Lies about how big the uncompressed content is (~4GB); our reader
+      // Lies about how big the uncompressed content is (~4GB); the reader
       // never allocates based on this field, only on the actual bytes
       // present (bounded by compressedSize, which is honest here).
       declaredUncompressedSize: 0xfffffffe,

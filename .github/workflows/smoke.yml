@@ -1,25 +1,18 @@
 name: Site smoke (weekly)
 
-# Weekly host-matrix regression against real, public AI chat sites (see
-# docs/NEXT_PLAN.md W3: "Weekly Playwright smoke across 7 hosts (local CI,
-# no egress)"). This workflow runs the browser locally on the runner against
-# public sites over the runner's normal outbound HTTPS — it does not touch
-# the extension's own no-egress guarantee, which is about the *extension*
-# never calling a network API (see .github/workflows/ci.yml's no-egress
-# gate). Those are two different things; this job existing does not weaken
-# that one.
+# Weekly host-matrix regression against real, public AI chat sites, run over
+# the runner's normal outbound HTTPS. Separate from the extension's own
+# no-egress guarantee (ci.yml's no-egress gate), which covers the extension
+# itself never calling a network API.
 #
-# HONEST CAVEAT: this job hits chatgpt.com, chat.openai.com, claude.ai,
-# gemini.google.com, copilot.microsoft.com, chat.mistral.ai, and
-# www.perplexity.ai from a GitHub-hosted runner IP with no login session.
-# Several of these sites bot-wall or login-wall anonymous/datacenter
-# traffic. tools/e2e-smoke.mjs --all treats "no editor found" as SKIP, not
-# FAIL, specifically to absorb that — but a SKIP-heavy run is not proof the
-# guardrail works on those hosts, only that it wasn't disproven. Treat a
-# green run here as best-effort signal, not a validated-on-every-host
-# guarantee, until confirmed against a real (logged-in / managed) profile.
-# Read the job log's PASS/FAIL/SKIP summary table before trusting the
-# green checkmark.
+# Runs against chatgpt.com, chat.openai.com, claude.ai, gemini.google.com,
+# copilot.microsoft.com, chat.mistral.ai, and www.perplexity.ai from a
+# GitHub-hosted runner IP with no login session. Several of these sites
+# bot-wall or login-wall anonymous/datacenter traffic, so
+# tools/e2e-smoke.mjs --all treats "no editor found" as SKIP rather than
+# FAIL. A SKIP-heavy green run is best-effort signal, not proof the
+# guardrail works on those hosts — check the job log's PASS/FAIL/SKIP
+# summary table before trusting the checkmark.
 
 on:
   schedule:
@@ -56,11 +49,8 @@ jobs:
         id: chrome
         run: |
           set -euo pipefail
-          # ubuntu-latest ships Chrome stable preinstalled, but the exact
-          # binary name has moved across runner image versions
-          # (google-chrome-stable vs google-chrome symlink) — resolve it
-          # instead of hardcoding /usr/bin/google-chrome so this doesn't
-          # silently break on a runner image bump.
+          # Binary name varies across runner image versions; resolve rather
+          # than hardcode the path.
           for candidate in google-chrome-stable google-chrome chromium-browser chromium; do
             if command -v "$candidate" >/dev/null 2>&1; then
               echo "path=$(command -v "$candidate")" >> "$GITHUB_OUTPUT"

@@ -1,9 +1,6 @@
 (async () => {
-  // Placeholder repo path — promptwarden/promptwarden is not a public
-  // GitHub org/repo yet. Update this constant once the real GitHub
-  // org/repo is live; nothing else about the report-link code needs
-  // to change.
-  const ISSUE_REPO_URL = "https://github.com/promptwarden/promptwarden";
+  // GitHub repo the "Problem melden" link opens issues against.
+  const ISSUE_REPO_URL = "https://github.com/zwaneldmz/promptwarden";
 
   const ACTION_PRIORITY = { block: 3, redact: 2, warn: 1 };
 

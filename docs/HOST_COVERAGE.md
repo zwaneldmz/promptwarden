@@ -1,33 +1,31 @@
 # Host Coverage: default 7, admin-extensible without a store re-review
 
-Status: **default coverage, the permission plumbing, the background-side dynamic
-registration, and the popup grant flow are all shipped.** Declaring `extraHosts` and
-granting the permission now makes the content script actually inject on the named
-origin. That is not the same as the policy engine actually *enforcing* anything there —
-see "The other half: `hostMatches()` and `policy.hosts`" below for the one remaining
-manual step (mirroring the same origins into the policy document's `hosts` array), which
-this doc's scope does not automate.
+Default coverage, the permission plumbing, the background-side dynamic registration, and
+the popup grant flow are shipped. Declaring `extraHosts` and granting the permission makes
+the content script inject on the named origin — that's not the same as the policy engine
+enforcing anything there. See "The other half: `hostMatches()` and `policy.hosts`" below
+for the one remaining manual step: mirroring the same origins into the policy document's
+`hosts` array.
 
-## The problem this answers
+## Motivation
 
 Any exposure measurement (sensitive-data hits per user per week) runs against exactly the
 hosts the extension is registered on — by default the 7 hardcoded ones in
-`content_scripts[0].matches` (`apps/extension/manifest.json`). That is a 7-host allowlist's
+`content_scripts[0].matches` (`apps/extension/manifest.json`). That's a 7-host allowlist's
 exposure rate, not the real one: an org whose staff use an internal chat gateway, a
 self-hosted LLM UI, or a vendor tool outside the 7 contributes zero measured exposure
-regardless of actual risk. An admin who asks "what about our internal tool?" should not have
-to wait for the next store review cycle — that's a multi-day-to-multi-week delay.
+regardless of actual risk. Extending coverage to a host outside the 7 normally requires a
+store review cycle; the mechanism below avoids that.
 
-## Why the default is 7 hosts, not `https://*/*`, by default
+## Why the default is 7 hosts, not `https://*/*`
 
 `host_permissions: []` plus a 7-origin `content_scripts.matches` list is a deliberate,
 narrow **required** permission grant:
 
 - The Chrome Web Store install prompt and any admin's permission-review screen both read
   the required permission surface, not the optional one. A required `https://*/*` reads, to
-  a reviewer or a privacy officer, as "this extension can inject into every page you visit"
-  — store-review friction and user hesitation the narrow footprint avoids. Zero-egress plus
-  a narrow permission footprint is the project's identity.
+  a reviewer or a privacy officer, as "this extension can inject into every page you visit,"
+  which adds store-review friction and user hesitation that a narrow footprint avoids.
 - A named, auditable host list is also verifiable: "PromptWarden scans these 7 named AI chat
   sites" is a sentence anyone can check by reading the manifest. "PromptWarden can run
   anywhere" is not.
@@ -46,8 +44,8 @@ individual user) making an explicit, revocable grant — never a store re-submis
     install-time prompt; Chrome only prompts for optional permissions when the extension
     calls `chrome.permissions.request(...)` in response to a user gesture, at whatever later
     moment that happens.
-  - Manifest JSON validity was checked directly (`python3 -m json.tool`) as part of this
-    change; there is no existing manifest-schema test in the repo to extend.
+  - Manifest JSON validity can be checked directly with `python3 -m json.tool`; there is no
+    manifest-schema test in the repo.
 - `apps/extension/managed_schema.json` declares `extraHosts` as an array-of-strings managed
   policy field: the list of additional origin match patterns (e.g.
   `"https://internal-chat.example.com/*"`) an admin wants scanned, distributed the same way
@@ -72,8 +70,8 @@ individual user) making an explicit, revocable grant — never a store re-submis
   **"Enable extended coverage"** button that calls `chrome.permissions.request(...)` from the
   click handler (the required user gesture), then messages the background service worker to
   re-sync immediately rather than waiting for the `onAdded` listener. The popup also has a
-  **"Problem melden"** link that opens a prefilled GitHub issue (placeholder repo path — the
-  real one isn't public yet, see the comment at the top of `popup.js`) carrying only the
+  **"Problem melden"** link that opens a prefilled GitHub issue against
+  `zwaneldmz/promptwarden` carrying only the
   extension version, the browser UA, and a category-level count summary from `pw-diagnostics`
   — never event data, never a hostname from `pw-events` or `pw-diagnostics`.
 
@@ -137,12 +135,12 @@ than unsafe (silent bypass of a rule the admin thought was active), but it is a 
 admin who did Steps 1–2 and reasonably assumed coverage was complete.
 
 **So: every origin added to `extraHosts` must also be added to `policy.hosts`, by hand, in
-the same policy update.** Nothing in this round automates that mirroring — `extraHosts` and
-`policy` are independent managed-storage fields read by different code paths
-(`background.ts`'s `syncExtraHostCoverage` vs. `content.ts`'s policy application), and
-keeping them in sync is currently a manual admin responsibility. A future round could fold
-`extraHosts` into `hostMatches()` directly (so injection and enforcement share one source of
-truth) — out of scope here; flagged, not fixed.
+the same policy update.** Nothing today automates that mirroring — `extraHosts` and `policy`
+are independent managed-storage fields read by different code paths (`background.ts`'s
+`syncExtraHostCoverage` vs. `content.ts`'s policy application), and keeping them in sync is
+a manual admin responsibility. Folding `extraHosts` into `hostMatches()` directly, so
+injection and enforcement share one source of truth, would remove this step — not
+implemented.
 
 ## How it's implemented
 
@@ -172,9 +170,8 @@ worker, via `chrome.scripting.registerContentScripts`. **Shipped in `apps/extens
 async function syncExtraHostCoverage(): Promise<void>;
 ```
 
-(Unlike the original spec's signature, the shipped version takes no `extraHosts` parameter —
-it reads managed storage itself via `chrome.storage.managed.get(["extraHosts"])`, the same
-way `resolvePolicy()` reads `policy`. Callers just call it with no arguments.)
+`syncExtraHostCoverage()` takes no parameters — it reads managed storage itself via
+`chrome.storage.managed.get(["extraHosts"])`, the same way `resolvePolicy()` reads `policy`.
 
 ### Registration flow (as shipped)
 
@@ -235,26 +232,23 @@ way `resolvePolicy()` reads `policy`. Callers just call it with no arguments.)
 
 ## Reporting requirement
 
-**Any exposure report must name the host coverage it ran with** — "7 default hosts" vs
-"7 default + N admin-added hosts, granted on [date] and mirrored into policy.hosts."
-Coverage is not fixed over time now that `extraHosts` registration is live: a number from
-before a coverage grant and a number from after are not comparable, and presenting them as
-if they were
-overstates either the improvement or the baseline. A granted-but-not-policy-mirrored host
-(see "The other half" above) contributes **zero** measured exposure even though the content
-script is running there — a report must not claim coverage for a host that was only
-declared+granted without confirming it also appears in `policy.hosts`.
+Any exposure export must name the host coverage it ran with: "7 default hosts" or "7 default
++ N admin-added hosts (granted [date], mirrored into `policy.hosts`)." Coverage changes over
+time as `extraHosts` grants land, so numbers from before and after a grant aren't comparable.
+A host that's declared and granted but not yet mirrored into `policy.hosts` (see "The other
+half" above) contributes zero measured exposure even though the content script is running
+there.
 
-## Honest summary
+## Status summary
 
 | Piece | Status |
 |---|---|
 | `optional_permissions` / `optional_host_permissions` in manifest | Shipped |
 | `extraHosts` field in managed schema | Shipped (declaration only) |
 | Fleet-wide grant via `ExtensionSettings.runtime_allowed_hosts` | Standard Chrome Enterprise mechanic, no PromptWarden code needed, usable today once an admin has the extension ID |
-| Popup "Enable extended coverage" one-click grant button | **Shipped this change** (`apps/extension/popup.js` / `popup.html`) |
-| Popup "Problem melden" prefilled GitHub issue link | **Shipped this change** — placeholder repo path, see comment in `popup.js` |
-| Background-side `chrome.scripting.registerContentScripts` sync | **Shipped this change** (`apps/extension/src/background.ts`, `syncExtraHostCoverage`) |
+| Popup "Enable extended coverage" one-click grant button | **Shipped** (`apps/extension/popup.js` / `popup.html`) |
+| Popup "Problem melden" prefilled GitHub issue link | **Shipped** — targets `zwaneldmz/promptwarden` |
+| Background-side `chrome.scripting.registerContentScripts` sync | **Shipped** (`apps/extension/src/background.ts`, `syncExtraHostCoverage`) |
 | Scanning (content script *injects*) on a granted `extraHosts` origin outside the default 7 | **Possible now** — declare + grant, nothing else required for injection |
 | Enforcement (policy rules actually *apply*) on that same origin | **Requires one more manual step** — the origin must also be added to `policy.hosts`, by hand, or `hostMatches()` silently no-ops there. See "The other half" above |
-| Automated mirroring of `extraHosts` into `policy.hosts` | Not built — out of scope this round, flagged above |
+| Automated mirroring of `extraHosts` into `policy.hosts` | Not built |

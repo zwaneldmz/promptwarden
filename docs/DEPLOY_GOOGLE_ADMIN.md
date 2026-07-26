@@ -1,6 +1,6 @@
 # Deploying PromptWarden via Google Admin Console (Chrome)
 
-**Verified: pending — needs a real managed tenant (founder action W3).**
+**Note:** not yet verified against a real managed tenant; treat the steps below as unconfirmed until tested end-to-end.
 
 Force-install PromptWarden across a fleet and push a managed policy, no end-user install
 step or permission prompt required. This doc covers Chrome; see `DEPLOY_INTUNE.md` for
@@ -10,12 +10,11 @@ Windows/Intune-managed fleets and `DEPLOY_GPO.md` for on-prem Active Directory.
 
 - A Google Workspace / Chrome Enterprise Admin console with Chrome browser management
   enabled for the target org unit.
-- The PromptWarden **Chrome Web Store extension ID**. As of this writing the Chrome Web Store
-  listing has not shipped yet. Until
-  then, use `<PROMPTWARDEN_EXTENSION_ID>` as a placeholder everywhere below and replace it
-  once the store assigns a real ID — **do not** substitute a self-hosted CRX's extension ID
-  here; those are different IDs (see `DEPLOY_SELF_HOSTED_CRX.md`) and force-installing the
-  wrong one will not resolve.
+- The PromptWarden **Chrome Web Store extension ID**. The Chrome Web Store listing has not
+  shipped yet. Until then, use `<PROMPTWARDEN_EXTENSION_ID>` as a placeholder everywhere below
+  and replace it once the store assigns a real ID — **do not** substitute a self-hosted CRX's
+  extension ID here; those are different IDs (see `DEPLOY_SELF_HOSTED_CRX.md`) and
+  force-installing the wrong one will not resolve.
 
 ## Step 1 — Force-install the extension
 

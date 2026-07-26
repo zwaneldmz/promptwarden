@@ -1,6 +1,6 @@
 # Self-Hosted CRX Deployment (no store dependency)
 
-**Verified: pending — needs a real managed tenant (founder action W3).**
+**Note:** not yet verified against a real managed tenant; treat the steps below as unconfirmed until tested end-to-end.
 
 Force-installs Chrome/Edge only accept a store URL or an update URL you host — Chrome and
 Edge do not allow force-installing an arbitrary local `.crx` file directly. This doc packs

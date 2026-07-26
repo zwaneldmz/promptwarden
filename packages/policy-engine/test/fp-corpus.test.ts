@@ -6,14 +6,13 @@ import { parsePolicy, Policy } from "../src/policy.js";
 /**
  * False-positive corpus + bulk_pii coverage.
  *
- * The FP corpus half of this file exists because the guardrail UX dies the
- * day it cries wolf on an order number: every fixture below is a realistic,
- * everyday string a support/ops/finance employee might paste that must
- * produce ZERO findings under a policy with every built-in detector active
- * (nothing set to "allow", so nothing here is passing by being ignored).
+ * FP corpus: every fixture below is a realistic, everyday string a
+ * support/ops/finance employee might paste, and must produce ZERO findings
+ * under a policy with every built-in detector active (nothing set to
+ * "allow", so nothing here passes by being ignored).
  *
- * The bulk_pii half tests the "someone pasted our whole customer list"
- * post-pass detector (see engine.ts evaluate()).
+ * bulk_pii: tests the post-pass detector for "someone pasted our whole
+ * customer list" (see engine.ts evaluate()).
  */
 
 /** Every built-in detector + bulk_pii turned on (non-allow), nothing silently skipped. */

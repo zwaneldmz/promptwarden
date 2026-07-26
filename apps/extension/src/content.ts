@@ -1,19 +1,19 @@
 /**
  * PromptWarden content script.
  *
- * Deliberately selector-less: AI sites change their DOM weekly, so nothing
- * here depends on site-specific CSS selectors. Instead we intercept the
- * generic mechanics every chat UI shares, all in the capture phase so we run
- * before the page's own handlers:
+ * Selector-less by design: AI sites change their DOM weekly, so nothing here
+ * depends on site-specific CSS selectors. Instead it intercepts the generic
+ * mechanics every chat UI shares, in the capture phase so it runs before the
+ * page's own handlers:
  *   1. Enter keydown inside an editable element
  *   2. click on a button that submits an adjacent editable element
  *   3. paste of text into an editable element
  *   4. change on <input type="file"> and drop of files
  *
- * On interception we evaluate the text against the policy and either let it
- * pass, warn, redact, or block. The inline path is entirely local: no network
- * call, no LLM, ever. The only thing that leaves this script is the output of
- * `toLogRecord`, which is the single privacy gate for all logging.
+ * Intercepted text is evaluated against the policy and allowed, warned,
+ * redacted, or blocked. Everything runs locally: no network call, no LLM.
+ * The only thing that leaves this script is the output of `toLogRecord`,
+ * the single privacy gate for all logging.
  */
 import { evaluate, parsePolicy, hostMatches, Policy, EvaluationResult, toLogRecord } from "@promptwarden/policy-engine";
 import { FALLBACK_POLICY } from "./default-policy.js";
@@ -31,24 +31,21 @@ import {
 let policy: Policy = FALLBACK_POLICY;
 let bypassNextSubmit = false; // set after the user chooses "send anyway" / redact
 /**
- * Timer that auto-expires `bypassNextSubmit`. A bare boolean set on "send
- * anyway" and cleared only by the next submit attempt is a stale open gate:
- * if the re-dispatched Enter never reaches a real submit handler (click-only
- * sites, an editable detached by a framework re-render), the flag stays
- * armed and silently waves through a later, unrelated prompt. Cleared by
- * whichever comes first: this timer, or the "any subsequent input" listener
- * below.
+ * Auto-expires `bypassNextSubmit` after 2s. Without this, a boolean cleared
+ * only by the next submit attempt stays armed if the resubmit never reaches
+ * a real submit handler (click-only sites, a detached editable), silently
+ * waving through a later, unrelated prompt. Cleared by whichever comes
+ * first: this timer, or the "any subsequent input" listener below.
  */
 let bypassTimer: ReturnType<typeof setTimeout> | null = null;
-/** True only while we synthesize an event to release an upload we held. */
+/** True only while synthesizing an event to release a held upload. */
 let replaying = false;
 /**
  * The most recently focused editable, tracked via a capture-phase `focusin`
- * listener. Clicking a send button usually moves focus to the button before
- * our click listener runs, so `document.activeElement` is the button by
- * then and the click path's fallback misses entirely — this is the
- * fallback of last resort for the click and submit paths. Re-checked for
- * `isConnected` before use since a framework re-render can detach it.
+ * listener. Clicking a send button moves focus to the button before the
+ * click listener runs, so `document.activeElement` is already the button —
+ * this is the fallback of last resort for the click and submit paths.
+ * Re-checked for `isConnected` since a framework re-render can detach it.
  */
 let lastFocusedEditable: HTMLElement | null = null;
 
@@ -105,8 +102,8 @@ function editableInForm(form: HTMLFormElement): HTMLElement | null {
  * How a submit attempt was triggered, so "Send anyway" can resume it the
  * same way instead of always faking an Enter keypress. A synthetic Enter
  * silently no-ops on sites where Enter doesn't send (click-only UIs, or
- * ChatGPT's "Enter = newline" setting) — the click that gets swallowed by
- * `stopImmediatePropagation` below is the only thing that would have sent it.
+ * ChatGPT's "Enter = newline" setting); only the original click, swallowed
+ * by `stopImmediatePropagation` below, would have sent it.
  */
 type SubmitTrigger =
   | { kind: "keyboard" }
@@ -139,12 +136,11 @@ function resumeSubmit(trigger: SubmitTrigger, editable: HTMLElement) {
 }
 
 function onSubmitAttempt(e: Event, editable: HTMLElement, trigger: SubmitTrigger) {
-  // Consumed here without clearing: the same "send anyway" resubmission can
-  // legitimately reach this function twice (once when the keydown listener
-  // below catches our synthetic Enter, again if that leads to a real
-  // "submit" event), and both must skip evaluation. Clearing is handled
-  // solely by the timer and the "any subsequent input" listener so a later,
-  // different prompt is never accidentally waved through.
+  // Not cleared here: a "send anyway" resubmission can legitimately reach
+  // this function twice (the synthetic Enter, then the resulting "submit"
+  // event), and both must skip evaluation. Only the timer and the "any
+  // subsequent input" listener clear it, so a later, different prompt is
+  // never waved through.
   if (bypassNextSubmit) return;
   const text = readText(editable);
   if (!text.trim()) return;
@@ -207,11 +203,11 @@ document.addEventListener(
 );
 
 /**
- * Any real user input disarms a still-armed bypass immediately, rather than
- * waiting out the timer — so typing a new, unrelated prompt right after a
- * "send anyway" is always scanned. isTrusted-gated: our own synthetic input
- * events (file-release replay, redact/paste insertion) must not disarm a
- * legitimately armed bypass.
+ * Real user input disarms a still-armed bypass immediately rather than
+ * waiting out the timer, so a new prompt typed right after "send anyway" is
+ * always scanned. Gated on isTrusted: synthetic input events (file-release
+ * replay, redact/paste insertion) must not disarm a legitimately armed
+ * bypass.
  */
 document.addEventListener(
   "input",
@@ -233,17 +229,10 @@ document.addEventListener(
 );
 
 /**
- * Word-based replacement for the old attribute substring selector, which
- * matched any button whose aria-label/data-testid contained "end" — German
- * Beenden/Anwenden/Verwenden/Ausblenden and English Append/Extend all
- * contain "end" but (verified with actual string checks) none of them
- * contain "send", "senden", "schick", or "submit" as a substring: none of
- * those four German words even has an "s" in it. Absenden/Senden do contain
- * "senden". No site-specific selectors — stays a generic, word-based check.
+ * Substring match, not word-boundary: German "Absenden"/"Abschicken" embed
+ * "senden"/"schick" mid-word, so \b anchors would miss them. Known false
+ * positive: labels containing "Sender".
  */
-// Substring on purpose: "Absenden"/"Abschicken" embed the words mid-string,
-// so \b anchors would miss them. Residual false positive: labels like
-// "Sender". Accepted — tighten per-word only if a real site surfaces one.
 const SEND_WORD = /send|senden|schick|submit/i;
 
 function isLikelySendButton(btn: Element): boolean {
@@ -260,20 +249,18 @@ document.addEventListener(
   (e) => {
     if (!enforcing()) return;
     const target = e.target as Element | null;
-    // Never treat a click inside our own guardrail dialog as a page
-    // send-button click: "Send anyway" itself matches SEND_WORD, and
-    // without this exclusion it would swallow its own click and re-open
-    // the dialog instead of resuming the send (Finding B).
+    // Exclude clicks inside the guardrail dialog itself: "Send anyway"
+    // matches SEND_WORD, so without this the button would swallow its own
+    // click and re-open the dialog instead of resuming the send.
     if (target?.closest?.(`#${UI_ID}`)) return;
-    // Armed only while we're re-clicking the button stored below to resume
-    // a "Send anyway"; let that resumed click pass straight through
-    // unexamined rather than re-evaluating (and re-intercepting) it.
+    // Armed only while resuming a "Send anyway" by re-clicking the stored
+    // button; let it pass through unexamined instead of re-intercepting it.
     if (bypassNextSubmit) return;
     const btn = target?.closest?.("button, [role='button' i]");
     if (!btn || !isLikelySendButton(btn)) return;
     // Clicking the button usually moves focus to it first, so
-    // `activeEditable(null)`'s document.activeElement fallback misses; fall
-    // back further to the last editable we saw focused.
+    // activeEditable(null)'s document.activeElement fallback misses; fall
+    // back further to the last focused editable.
     const editable = activeEditable(null) ?? connectedLastFocused();
     if (editable) onSubmitAttempt(e, editable, { kind: "click", button: btn as HTMLElement });
   },
@@ -281,9 +268,9 @@ document.addEventListener(
 );
 
 /**
- * A genuine <form> submit — Enter inside a plain form, a page calling
- * `requestSubmit()`, or any other path that bypasses the click/keydown
- * listeners above — was previously not observed at all.
+ * Catches a genuine <form> submit: Enter inside a plain form, a page
+ * calling `requestSubmit()`, or any other path that bypasses the
+ * click/keydown listeners above.
  */
 document.addEventListener(
   "submit",
@@ -322,8 +309,8 @@ document.addEventListener(
     // the text ever reaches the page's editor state.
     e.preventDefault();
     e.stopImmediatePropagation();
-    // ponytail: paste + later submit can double-log one exposure; add a
-    // correlation id if event counts must be exact
+    // NOTE: paste + later submit can double-log one exposure. Add a
+    // correlation id if event counts must be exact.
     log(result);
 
     const saved: SavedSelection = saveSelection(editable);
@@ -360,10 +347,9 @@ document.addEventListener(
 
 /**
  * Scannable attachments — text-like files and .xlsx/.docx (see
- * `isScannableFile`) — are held (propagation stopped) while we read and
- * evaluate them, then either released or dropped. Anything else is never
- * touched at all — the event flows on untouched and no filename or metadata
- * is recorded.
+ * `isScannableFile`) — are held (propagation stopped) while read and
+ * evaluated, then released or dropped. Anything else passes through
+ * untouched: no filename or metadata is recorded.
  */
 /**
  * Inputs whose files are currently held while a scan runs. Browsers fire
@@ -502,7 +488,7 @@ document.addEventListener(
   true,
 );
 
-/** Let the page see the input/change events we held back. */
+/** Let the page see the input/change events that were held back. */
 function releaseFileInput(input: HTMLInputElement) {
   replaying = true;
   try {

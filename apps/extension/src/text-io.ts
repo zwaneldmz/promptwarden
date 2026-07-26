@@ -96,7 +96,7 @@ export function saveSelection(el: HTMLElement): SavedSelection {
 
 /**
  * Insert `text` at the saved position, replacing whatever it spanned.
- * Used to substitute redacted text for a paste we intercepted.
+ * Used to substitute redacted text for an intercepted paste.
  */
 export function insertText(saved: SavedSelection, text: string) {
   if (saved.kind === "field") {

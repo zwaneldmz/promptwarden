@@ -1,6 +1,6 @@
 # Deploying PromptWarden via Microsoft Intune (Chrome and Edge)
 
-**Verified: pending — needs a real managed tenant (founder action W3).**
+**Note:** not yet verified against a real managed tenant; treat the steps below as unconfirmed until tested end-to-end.
 
 Covers Intune-managed Windows fleets, both browsers a DACH device fleet is likely to run:
 Google Chrome and Microsoft Edge. If the fleet is instead managed via on-prem Active

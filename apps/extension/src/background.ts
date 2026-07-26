@@ -355,8 +355,8 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
   if (msg.type === "sync-extra-hosts") {
     // Sent by popup.js right after chrome.permissions.request resolves
     // truthy — re-syncs immediately instead of waiting for the
-    // chrome.permissions.onAdded listener above (belt-and-suspenders; both
-    // paths converge on the same idempotent syncExtraHostCoverage()).
+    // chrome.permissions.onAdded listener above. Both paths converge on the
+    // same idempotent syncExtraHostCoverage().
     syncExtraHostCoverage().then(() => sendResponse({ ok: true }));
     return true; // async response
   }

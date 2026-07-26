@@ -2,40 +2,30 @@
  * Live-browser smoke regression for the extension's interception paths.
  *
  * Loads the unpacked extension into a local Chromium-family browser and
- * verifies on a real policy-matched site that the guardrail fires for:
+ * checks that the guardrail fires on a real chat site for:
  *   1. Enter-submit  (keydown path)
- *   2. click-to-send (focusin-tracked fallback — regression for the
- *      "activeEditable(null) misses when focus moved to the button" hole)
+ *   2. click-to-send (focusin-tracked fallback, since focus moves to the
+ *      send button before a plain activeEditable() check would catch it)
  *   3. paste         (paste path)
  *
- * Not covered here: the <form> submit path (no supported host uses a plain
- * form submit; verified manually against a local page) and the
- * bypass-expiry timer (needs a real send; verified manually).
+ * Not covered: the <form> submit path (no supported host uses a plain form
+ * submit; verified manually) and the bypass-expiry timer (needs a real
+ * send; verified manually).
  *
  * Usage:
  *   node tools/e2e-smoke.mjs
- *     Default: chatgpt.com only. Current behavior — any failure (including
- *     a missing editor, e.g. a login wall) throws and exits non-zero. This
- *     is the fast local dev-loop check; it does not skip.
+ *     chatgpt.com only. Any failure, including a missing editor (e.g. a
+ *     login wall), throws and exits non-zero.
  *
  *   node tools/e2e-smoke.mjs --all
- *     Host matrix: every host in apps/extension/manifest.json's
- *     content_scripts[0].matches (read from the manifest, not hardcoded, so
- *     the matrix can't drift from what the extension actually declares
- *     coverage for). A host where no editor can be found within the timeout
- *     (login wall, bot wall, CAPTCHA) is logged SKIP and does not fail the
- *     run — a SKIP is not a PASS, it just isn't treated as a product
- *     regression either, since it's an environment condition (anonymous
- *     access to a hosted AI chat site from a CI runner's IP) this repo has
- *     no way to control. Any other failure (guardrail didn't fire, wrong
- *     detector, etc.) is a real FAIL and does fail the run. Prints a
- *     PASS/FAIL/SKIP summary table at the end; exits non-zero iff any host
- *     FAILed (SKIP-only runs exit 0 — see docs/HOST_COVERAGE.md and
- *     .github/workflows/smoke.yml for why bot-wall SKIPs are expected and
- *     why results are best-effort until validated against real installs).
+ *     Runs against every host in apps/extension/manifest.json's
+ *     content_scripts[0].matches. A host where no editor is found within
+ *     the timeout (login wall, bot wall, CAPTCHA) is logged SKIP and does
+ *     not fail the run; any other failure is a FAIL and does. Prints a
+ *     PASS/FAIL/SKIP summary table and exits non-zero iff any host FAILed.
+ *     See docs/HOST_COVERAGE.md and .github/workflows/smoke.yml.
  *
- *   PW_BROWSER=/path/to/chrome overrides the browser binary (also used by
- *   the weekly CI smoke run against the runner's preinstalled Chrome).
+ *   PW_BROWSER=/path/to/chrome overrides the browser binary.
  *
  * Requires a headed-capable environment (xvfb-run on headless CI).
  */
@@ -52,9 +42,8 @@ const BROWSER =
 
 const ALL = process.argv.includes("--all");
 
-// Host matrix comes from the manifest itself (not a second hardcoded list),
-// so --all can never drift from what the extension actually ships coverage
-// for.
+// Read the host matrix from the manifest so it can't drift from the
+// extension's declared coverage.
 const manifest = JSON.parse(fs.readFileSync(path.join(EXT, "manifest.json"), "utf8"));
 const MANIFEST_HOSTS = manifest.content_scripts[0].matches.map(
   (m) => new URL(m.replace(/\*$/, "")).origin + "/",

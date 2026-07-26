@@ -14,6 +14,12 @@
  *      ancestors including <body>, so a page setting *body's* id to that
  *      string made the exemption match every click on the page, silently
  *      disabling the whole click-to-send path. See content.ts.
+ *   5. a policy pushed into chrome.storage.local (via the extension's own
+ *      background service-worker context, not the page) takes effect in the
+ *      still-open tab with no reload — regression for ROADMAP.md §1.5 item
+ *      19. Uses the paste path for both halves so the deliberately
+ *      unintercepted "before" half never actually submits anything to the
+ *      live site. See checkLocalPolicyLiveUpdate() and content.ts.
  *
  * Not covered: the <form> submit path (no supported host uses a plain form
  * submit; verified manually) and the bypass-expiry timer (needs a real
@@ -79,6 +85,10 @@ const SITES = ALL ? MANIFEST_HOSTS : ["https://chatgpt.com/"];
 
 const IBAN_TEXT = "please pay invoice 118 to AT61 1904 3002 3457 3201 thanks";
 const CARD_TEXT = "customer card on file: 4532 0151 1283 0366";
+// default-policy.ts ships `email: allow`, so this is deliberately something
+// the fallback/standalone policy lets through untouched — see
+// checkLocalPolicyLiveUpdate() below.
+const EMAIL_TEXT = "please reach out to jane.doe@example.com about the renewal";
 const SEND_BUTTON_SELECTOR =
   'button[data-testid*="send" i], button[aria-label*="end" i], button[type="submit"]';
 const RELOAD_SETTLE_MS = 3500;
@@ -177,11 +187,80 @@ async function checkBodyIdClobber(ctx, page) {
   await expectIntercepted(page, ed);
 }
 
+/**
+ * Regression for ROADMAP.md §1.5 item 19: content.ts used to fetch the
+ * policy once at document_start and never again, so a corrected or
+ * tightened push needed a browser restart to reach a tab already open.
+ *
+ * Uses the paste path, not a real submit, for both halves of the assertion:
+ * an unintercepted paste is inert (the text lands in the local textarea and
+ * goes nowhere), whereas an unintercepted Enter/click would actually submit
+ * the message to a live chat site. That would make this check's "before"
+ * half — which is *supposed* to go unintercepted — send a real message,
+ * which is not an acceptable side effect of a smoke test.
+ *
+ * The policy push itself goes through the extension's own background
+ * service-worker context (Playwright's `context.serviceWorkers()`), an
+ * extension context with its own `chrome.storage` access — not the page's
+ * main world, and not a reach into the guardrail's dialog. It does not
+ * touch, weaken, or need to pierce the closed shadow root this suite
+ * deliberately leaves alone; see the file header.
+ *
+ * Run last in CHECKS: it leaves a policy behind in this profile's
+ * chrome.storage.local for the rest of the run, which would change what
+ * later checks should expect.
+ */
+async function checkLocalPolicyLiveUpdate(ctx, page) {
+  const ed = await editor(page);
+  await ctx.grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: new URL(page.url()).origin,
+  });
+
+  // Baseline: default-policy.ts ships `email: allow`, so a lone email
+  // pasted in should not intercept yet.
+  await page.evaluate((t) => navigator.clipboard.writeText(t), EMAIL_TEXT);
+  await ed.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+v" : "Control+v");
+  await page.waitForTimeout(800); // confirming absence, not presence — no need for expectIntercepted's poll
+  if (await guardrailShowing(page)) {
+    throw new Error("guardrail fired before the policy push — baseline assumption is wrong");
+  }
+
+  let sw = ctx.serviceWorkers()[0];
+  if (!sw) {
+    sw = await ctx.waitForEvent("serviceworker", { timeout: 5000 }).catch(() => null);
+  }
+  if (!sw) throw new Error("no background service worker found to push a policy through");
+
+  const host = new URL(page.url()).hostname;
+  await sw.evaluate(
+    (h) =>
+      chrome.storage.local.set({
+        policy: {
+          version: 1,
+          name: "smoke-live-update",
+          hosts: [h],
+          defaultAction: "allow",
+          logging: "off",
+          rules: [{ detector: "email", action: "warn" }],
+        },
+      }),
+    host,
+  );
+
+  // No reload: paste the same text into the still-open tab and confirm the
+  // now-updated policy intercepts it.
+  await page.evaluate((t) => navigator.clipboard.writeText(t), EMAIL_TEXT);
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+v" : "Control+v");
+  await expectIntercepted(page, ed);
+}
+
 const CHECKS = [
   { label: "enter-submit (iban)", run: checkEnterSubmit },
   { label: "click-to-send (credit_card)", run: checkClickToSend },
   { label: "paste (iban)", run: checkPaste },
   { label: "click-to-send after document.body.id clobber (credit_card)", run: checkBodyIdClobber },
+  { label: "local-policy push takes effect without reload (email)", run: checkLocalPolicyLiveUpdate },
 ];
 
 async function runChecks(ctx, page) {

@@ -17,7 +17,7 @@
  */
 import { evaluate, parsePolicy, hostMatches, Policy, EvaluationResult, toLogRecord } from "@promptwarden/policy-engine";
 import { FALLBACK_POLICY } from "./default-policy.js";
-import { isScannableFile, scanFiles } from "./file-scan.js";
+import { FileScan, isScannableFile, scanFiles } from "./file-scan.js";
 import {
   SavedSelection,
   activeEditable,
@@ -29,13 +29,26 @@ import {
 } from "./text-io.js";
 
 let policy: Policy = FALLBACK_POLICY;
-let bypassNextSubmit = false; // set after the user chooses "send anyway" / redact
 /**
- * Auto-expires `bypassNextSubmit` after 2s. Without this, a boolean cleared
- * only by the next submit attempt stays armed if the resubmit never reaches
- * a real submit handler (click-only sites, a detached editable), silently
- * waving through a later, unrelated prompt. Cleared by whichever comes
- * first: this timer, or the "any subsequent input" listener below.
+ * The one resubmission "Send anyway" approved: which editable, and the
+ * exact text it was approved with. A bare timer (the previous design) arms
+ * a 2s window during which ANY submission passes unscanned — different
+ * text, a different editable entirely, the site's own queued-draft resend,
+ * a network retry, or page script rewriting the textarea and dispatching an
+ * untrusted `input` — because a boolean has no way to ask "is this the
+ * literal thing that got approved?". Binding to element identity plus a
+ * snapshot of the text closes that: `matchesApprovedBypass` below only
+ * returns true for a submit attempt on this exact element still holding
+ * this exact text, so a different prompt — even one typed a moment later
+ * into the same box — is evaluated normally. Cleared to null by whichever
+ * comes first: the timer, or the "any subsequent input" listener below.
+ */
+let approvedBypass: { editable: HTMLElement; text: string } | null = null;
+/**
+ * Auto-expires `approvedBypass` after 2s — an outer backstop, not the
+ * primary mechanism: if the resumed submit never reaches a real submit
+ * handler at all (click-only sites, a detached editable), the approval
+ * still can't linger indefinitely.
  */
 let bypassTimer: ReturnType<typeof setTimeout> | null = null;
 /** True only while synthesizing an event to release a held upload. */
@@ -49,14 +62,53 @@ let replaying = false;
  */
 let lastFocusedEditable: HTMLElement | null = null;
 
-send({ type: "get-policy" }, (resp) => {
-  if (chrome.runtime.lastError) return;
-  if (resp?.policy) {
-    try {
-      policy = parsePolicy(resp.policy);
-    } catch {
-      report("policy-parse-error");
+/**
+ * (Re-)resolve the effective policy and parse it in place. Shared by the
+ * initial document_start fetch below and the storage-change listener that
+ * follows it, so a corrected or tightened push reaches already-open tabs
+ * without a reload — and a rollback doesn't need a browser restart either.
+ *
+ * Goes through background's `resolvePolicy()` (managed > local > built-in,
+ * including its handling of a managed policy that's present but broken)
+ * rather than reading a storage change's `newValue` directly: that keeps
+ * this one precedence-and-fail-safe implementation in one place instead of
+ * a second copy here that could drift from it — in particular, a managed
+ * policy failing to parse must fail to the built-in default, never fall
+ * through to the user-writable local policy, and duplicating that rule
+ * imperfectly here would reopen the exact privilege inversion it fixes.
+ *
+ * A parse failure (or a dead service worker) leaves `policy` exactly as it
+ * was — the module-level variable is only ever reassigned on success — so
+ * enforcement can fail to strengthen on a bad update, but never silently
+ * weakens from whatever is already in force.
+ */
+function refreshPolicy(): void {
+  send({ type: "get-policy" }, (resp) => {
+    if (chrome.runtime.lastError) return;
+    if (resp?.policy) {
+      try {
+        policy = parsePolicy(resp.policy);
+      } catch {
+        report("policy-parse-error");
+      }
     }
+  });
+}
+
+refreshPolicy();
+
+/**
+ * ROADMAP §1.5 item 19: content.ts used to fetch the policy once at
+ * document_start and never again, so a corrected or rolled-back push needed
+ * a full browser restart to reach tabs already open. Content scripts get
+ * `storage.onChanged` for free under the existing `storage` permission — no
+ * manifest change needed — so listen for the `policy` key changing in
+ * either area an admin or the user can write it (`managed`, `local`) and
+ * re-resolve on any hit.
+ */
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if ((areaName === "managed" || areaName === "local") && "policy" in changes) {
+    refreshPolicy();
   }
 });
 
@@ -64,22 +116,36 @@ function enforcing(): boolean {
   return hostMatches(policy, location.hostname);
 }
 
-/** Arm the bypass gate for exactly one resubmission, auto-expiring it. */
-function armBypassNextSubmit() {
-  bypassNextSubmit = true;
+/**
+ * Approve exactly one resubmission: `editable` holding exactly `text`,
+ * auto-expiring after 2s. Called at the moment "Send anyway" is picked, so
+ * `text` is a snapshot of what the user actually approved — not re-derived
+ * later, when the box's contents could already have changed.
+ */
+function armBypass(editable: HTMLElement, text: string) {
+  approvedBypass = { editable, text };
   if (bypassTimer !== null) clearTimeout(bypassTimer);
   bypassTimer = setTimeout(() => {
-    bypassNextSubmit = false;
+    approvedBypass = null;
     bypassTimer = null;
   }, 2000);
 }
 
-function disarmBypassNextSubmit() {
-  bypassNextSubmit = false;
+function disarmBypass() {
+  approvedBypass = null;
   if (bypassTimer !== null) {
     clearTimeout(bypassTimer);
     bypassTimer = null;
   }
+}
+
+/** True only for a submit attempt on the exact element + text "Send anyway" approved. */
+function matchesApprovedBypass(editable: HTMLElement): boolean {
+  return (
+    approvedBypass !== null &&
+    approvedBypass.editable === editable &&
+    readText(editable) === approvedBypass.text
+  );
 }
 
 /** Fallback of last resort for the click and submit paths. */
@@ -114,12 +180,19 @@ type SubmitTrigger =
  * Resume the send exactly the way it was originally triggered. Falls back to
  * the Enter re-dispatch if the stored button/form was detached by a
  * framework re-render since interception.
+ *
+ * Called synchronously from the "Send anyway" `onPick`, so `readText`
+ * captures precisely what the user approved at the moment they approved it
+ * — the snapshot `matchesApprovedBypass` will compare every resumed submit
+ * attempt against.
  */
 function resumeSubmit(trigger: SubmitTrigger, editable: HTMLElement) {
-  armBypassNextSubmit();
+  armBypass(editable, readText(editable));
   if (trigger.kind === "click" && trigger.button.isConnected) {
-    // The click listener below checks bypassNextSubmit before it even looks
-    // for a matching button, so this resumed click passes straight through.
+    // The click listener below no longer short-circuits on a bare bypass
+    // flag — it re-enters onSubmitAttempt like any other click, which is
+    // what lets matchesApprovedBypass() verify identity+text before
+    // standing aside for this resumed click.
     trigger.button.click();
     return;
   }
@@ -138,10 +211,12 @@ function resumeSubmit(trigger: SubmitTrigger, editable: HTMLElement) {
 function onSubmitAttempt(e: Event, editable: HTMLElement, trigger: SubmitTrigger) {
   // Not cleared here: a "send anyway" resubmission can legitimately reach
   // this function twice (the synthetic Enter, then the resulting "submit"
-  // event), and both must skip evaluation. Only the timer and the "any
-  // subsequent input" listener clear it, so a later, different prompt is
+  // event), and both must skip evaluation identically — matchesApprovedBypass
+  // is a pure check, not a consume-once flag, so it says yes both times. Only
+  // the timer and the "any subsequent input" listener clear it, so a later,
+  // different prompt (or the same text retyped into a different editable) is
   // never waved through.
-  if (bypassNextSubmit) return;
+  if (matchesApprovedBypass(editable)) return;
   const text = readText(editable);
   if (!text.trim()) return;
 
@@ -205,14 +280,18 @@ document.addEventListener(
 /**
  * Real user input disarms a still-armed bypass immediately rather than
  * waiting out the timer, so a new prompt typed right after "send anyway" is
- * always scanned. Gated on isTrusted: synthetic input events (file-release
- * replay, redact/paste insertion) must not disarm a legitimately armed
- * bypass.
+ * always scanned. Still useful even with identity+text binding: it's what
+ * catches the edge case where the *same* editable is retyped back to the
+ * *exact same* approved text before the resumed submit lands — text
+ * equality alone can't tell that apart from the original approval, but an
+ * intervening real keystroke can. Gated on isTrusted: synthetic input events
+ * (file-release replay, redact/paste insertion) must not disarm a
+ * legitimately armed bypass.
  */
 document.addEventListener(
   "input",
   (e) => {
-    if (e.isTrusted && bypassNextSubmit) disarmBypassNextSubmit();
+    if (e.isTrusted && approvedBypass !== null) disarmBypass();
   },
   true,
 );
@@ -254,9 +333,13 @@ document.addEventListener(
     // click and re-open the dialog instead of resuming the send. Identity
     // check, not an id/selector lookup — see clickIsFromGuardrail() below.
     if (clickIsFromGuardrail(e)) return;
-    // Armed only while resuming a "Send anyway" by re-clicking the stored
-    // button; let it pass through unexamined instead of re-intercepting it.
-    if (bypassNextSubmit) return;
+    // No blanket "bypass armed, skip everything" check here on purpose: that
+    // was the free-fire window (ROADMAP §1.2 item 6) — during it, ANY click
+    // on ANY send-shaped button passed unexamined, not just the resumed one.
+    // The resumed click from resumeSubmit() still reaches onSubmitAttempt
+    // below like every other click; matchesApprovedBypass() there is what
+    // recognizes it (same editable, same text) and stands aside for it
+    // specifically, without ever preventDefault()-ing it.
     const btn = target?.closest?.("button, [role='button' i]");
     if (!btn || !isLikelySendButton(btn)) return;
     // Clicking the button usually moves focus to it first, so
@@ -383,9 +466,12 @@ function onFileInputEvent(e: Event) {
           return;
         }
         log(scan.result);
-        // Observe-only scan: recorded above, upload proceeds untouched.
+        // Observe-only scan, or nothing found: recorded above. Still has to
+        // fork on `unreadable` — see handleUnscanned() — since an
+        // all-unreadable scan reaches this branch too (zero findings, so
+        // neither `blocked` nor `needsWarning` is ever true for it).
         if (!scan.blocked && !scan.needsWarning) {
-          releaseFileInput(input);
+          handleUnscanned(scan, () => releaseFileInput(input), () => clearFileInput(input));
           return;
         }
         if (scan.blocked) {
@@ -452,9 +538,12 @@ document.addEventListener(
           return;
         }
         log(scan.result);
-        // Observe-only scan: recorded above, drop proceeds untouched.
+        // Observe-only scan, or nothing found: recorded above. Still has to
+        // fork on `unreadable` — see handleUnscanned() — since an
+        // all-unreadable scan reaches this branch too (zero findings, so
+        // neither `blocked` nor `needsWarning` is ever true for it).
         if (!scan.blocked && !scan.needsWarning) {
-          replayDrop(target, files);
+          handleUnscanned(scan, () => replayDrop(target, files));
           return;
         }
         if (scan.blocked) {
@@ -519,6 +608,44 @@ function unreadableNote(count: number): string {
 
 function failClosed(): boolean {
   return policy.onError === "closed";
+}
+
+/**
+ * Shared by the file-input and drop paths for a scan that came back neither
+ * `blocked` nor `needsWarning`. That used to mean one thing — genuinely
+ * clean, release silently — but `scanFiles` now also reaches zero findings
+ * when every file was unreadable (oversized, or a read/extract failure):
+ * `blocked`/`needsWarning` are derived from `findings`, so an all-unreadable
+ * scan is indistinguishable from a clean one by those two flags alone.
+ * Without this fork, that scan released (or replayed) the upload with no
+ * dialog, no event, and no way for `onError:"closed"` to ever engage —
+ * indistinguishable from "nothing found" from the outside.
+ *
+ * `release()` is the path's normal continuation (releaseFileInput /
+ * replayDrop). `onBlock`, run only when failing closed, lets the file-input
+ * caller clear its held input (drop has no analogous held state, so it
+ * defaults to a no-op).
+ */
+function handleUnscanned(scan: FileScan, release: () => void, onBlock: () => void = () => {}): void {
+  if (scan.unreadable === 0) {
+    release();
+    return;
+  }
+  if (failClosed()) {
+    onBlock();
+    showGuardrail({
+      title: "This file can't be uploaded",
+      detail: `${unreadableNote(scan.unreadable).trim()} Your organization's policy blocks unscanned uploads.`,
+      actions: [{ label: "Close", onPick: () => {} }],
+    });
+    return;
+  }
+  release();
+  showGuardrail({
+    title: "Some files could not be scanned",
+    detail: `${unreadableNote(scan.unreadable).trim()} The upload was not blocked, but its contents were not checked against policy.`,
+    actions: [{ label: "OK", onPick: () => {} }],
+  });
 }
 
 function showScanErrorBlocked() {

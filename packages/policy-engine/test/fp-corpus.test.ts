@@ -386,21 +386,117 @@ test("bulk_pii: bulkPiiThreshold overrides the default of 5", () => {
   assert.equal(evaluate(twoEmails, policy).findings.some((f) => f.detector === "bulk_pii"), false);
 });
 
-test("bulk_pii: distinct matches across categories (not just one) count toward the threshold", () => {
+test("bulk_pii: distinct matches spread thinly across categories do NOT sum to the threshold (per-category counting, ROADMAP §1.4 #16(a))", () => {
   const policy = bulkPolicy();
-  // 2 emails + 1 iban + 1 phone = 4 distinct matches across categories: not enough.
-  const fourDistinctAcrossCategories =
-    "a@example.com b@example.com pay to AT61 1904 3002 3457 3201 please call +43 660 1234567 about the ticket";
-  assert.equal(
-    evaluate(fourDistinctAcrossCategories, policy).findings.some((f) => f.detector === "bulk_pii"),
-    false,
-  );
-  // Adding a 5th distinct match (an SVNR) from yet another category tips it over.
-  const fiveDistinctAcrossCategories = `${fourDistinctAcrossCategories} svnr 1237 010180 on file`;
+  // 2 emails + 1 iban + 1 phone + 1 svnr = 5 distinct matches IN TOTAL, but
+  // every individual category (email:2, iban:1, phone:1, at_svnr:1) stays
+  // well under the threshold of 5. The old behaviour summed distinct
+  // matches across all five bulk_pii categories and fired here — exactly
+  // the flat-union design that also produced the email-signature false
+  // positive below. bulk_pii must now stay silent: no single category's
+  // own distinct count reaches the threshold.
+  const fiveDistinctAcrossCategories =
+    "a@example.com b@example.com pay to AT61 1904 3002 3457 3201 please call +43 660 1234567 about the ticket " +
+    "svnr 1237 010180 on file";
   assert.equal(
     evaluate(fiveDistinctAcrossCategories, policy).findings.some((f) => f.detector === "bulk_pii"),
+    false,
+  );
+  // Push ONE category (email) over the threshold on its own and it fires,
+  // regardless of what else is mixed in alongside it.
+  const fiveEmailsPlusOther = `${FIVE_EMAILS} pay to AT61 1904 3002 3457 3201 please`;
+  assert.equal(
+    evaluate(fiveEmailsPlusOther, policy).findings.some((f) => f.detector === "bulk_pii"),
     true,
   );
+});
+
+/**
+ * ROADMAP §1.4 #16(a) reproduction: an ordinary business email signature —
+ * one person's own email plus several of THEIR OWN phone numbers under
+ * different labels (main line, direct extension, mobile, fax) — reproduced
+ * the bug under the OLD flat cross-category count: 4 distinct phone numbers
+ * + 1 distinct email = 5 distinct matches in total, meeting the default
+ * threshold of 5 and blocking an everyday email sign-off. Confirmed via a
+ * throwaway repro against the pre-fix engine before writing this test.
+ */
+const ORDINARY_EMAIL_SIGNATURE = [
+  "Mit freundlichen Gruessen / Best regards,",
+  "",
+  "Anna Maier",
+  "Senior Account Manager",
+  "",
+  "Muster GmbH",
+  "Musterstrasse 12",
+  "1010 Vienna, Austria",
+  "",
+  "Zentrale: +43 1 234 5600",
+  "Tel (Durchwahl): +43 1 234 5678",
+  "Mobil: +43 660 1234567",
+  "Fax: +43 1 234 5679",
+  "E-Mail: anna.maier@example.at",
+].join("\n");
+
+test("bulk_pii: an ordinary email signature (one person's own email + several of their own phone numbers) stays silent", () => {
+  const policy = bulkPolicy();
+  const r = evaluate(ORDINARY_EMAIL_SIGNATURE, policy);
+  // Sanity check the repro actually exercises 5+ distinct matches in total
+  // (4 phones + 1 email) — otherwise this test would pass for the wrong
+  // reason (not enough matches at all, rather than the per-category fix).
+  const totalDistinct = new Set(
+    r.findings.filter((f) => f.detector === "phone" || f.detector === "email").map((f) => f.match),
+  );
+  assert.ok(totalDistinct.size >= 5, `expected >= 5 distinct phone/email matches, got ${totalDistinct.size}`);
+  assert.equal(r.findings.some((f) => f.detector === "bulk_pii"), false, "an email signature must not trip bulk_pii");
+  assert.equal(r.blocked, false);
+});
+
+test("bulk_pii: a genuine multi-customer export (5 distinct customers' emails) still fires", () => {
+  // Realistic "someone pasted our whole customer list" shape: one line per
+  // customer, each contributing a distinct email — the case per-category
+  // counting exists to keep catching.
+  const customerExport = [
+    "Name, Email",
+    "Alice Smith, alice.smith@customerco.example",
+    "Bob Jones, bob.jones@customerco.example",
+    "Carol White, carol.white@customerco.example",
+    "David Brown, david.brown@customerco.example",
+    "Eve Davis, eve.davis@customerco.example",
+  ].join("\n");
+  const r = evaluate(customerExport, bulkPolicy());
+  assert.equal(r.findings.some((f) => f.detector === "bulk_pii"), true);
+  assert.equal(r.blocked, true);
+});
+
+test("bulk_pii: with no explicit bulk_pii rule, it never fires — even with defaultAction=block and a category well past the threshold (ROADMAP §1.4 #16(b))", () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "bulk-pii-no-explicit-rule",
+    hosts: ["chatgpt.com"],
+    defaultAction: "block", // previously: bulk_pii would silently inherit this
+    logging: "event",
+    rules: [], // deliberately no bulk_pii rule
+  });
+  const r = evaluate(FIVE_EMAILS, policy);
+  assert.equal(r.findings.some((f) => f.detector === "bulk_pii"), false);
+  // The individual email findings still fire under the strict default —
+  // only the synthetic bulk_pii meta-detector is inert without a rule.
+  assert.equal(r.findings.filter((f) => f.detector === "email").length, 5);
+});
+
+test("bulk_pii: an explicit bulk_pii rule still fires past the threshold", () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "bulk-pii-explicit-rule",
+    hosts: ["chatgpt.com"],
+    defaultAction: "block",
+    logging: "event",
+    rules: [{ detector: "bulk_pii", action: "warn" }],
+  });
+  const r = evaluate(FIVE_EMAILS, policy);
+  const bulk = r.findings.find((f) => f.detector === "bulk_pii");
+  assert.ok(bulk, "expected an explicit bulk_pii rule to still produce a finding");
+  assert.equal(bulk.action, "warn");
 });
 
 test("bulk_pii: an allow-ruled bulk_pii stays silent even past the threshold", () => {

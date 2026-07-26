@@ -158,3 +158,211 @@ test("zero-width custom pattern cannot hang the engine", () => {
   const r = evaluate("hello", p);
   assert.ok(Array.isArray(r.findings)); // completed without hanging
 });
+
+/* ------------------------ retentionDays ceiling (ROADMAP §1.1 #12) -------------------- */
+
+test("retentionDays: accepts the 365-day boundary, rejects one day past it, and rejects the original 36500 regression", () => {
+  const base = { version: 1, name: "t", hosts: [], defaultAction: "warn", logging: "off", rules: [] };
+  assert.equal(parsePolicy({ ...base, retentionDays: 365 }).retentionDays, 365);
+  assert.throws(() => parsePolicy({ ...base, retentionDays: 366 }), /retentionDays/);
+  assert.throws(() => parsePolicy({ ...base, retentionDays: 36500 }), /retentionDays/);
+  // Existing lower-bound behaviour (positive, finite) must still hold.
+  assert.throws(() => parsePolicy({ ...base, retentionDays: 0 }), /retentionDays/);
+  assert.throws(() => parsePolicy({ ...base, retentionDays: -1 }), /retentionDays/);
+  assert.throws(() => parsePolicy({ ...base, retentionDays: Infinity }), /retentionDays/);
+  assert.equal(parsePolicy(base).retentionDays, undefined); // still optional
+});
+
+/* --------------------------- toLogRecord pairs (ROADMAP §1.4 #18, contract A) ---------- */
+
+test("toLogRecord pairs: binds each detector to the action it actually took, deduped and sorted by detector then action", () => {
+  // IBAN at redact, credit card at block — categories/actions alone would
+  // say "redact, block" happened and "iban, credit_card" fired, but not
+  // which detector took which action.
+  const policy = parsePolicy({
+    version: 1,
+    name: "pairs-test",
+    hosts: ["chatgpt.com"],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [
+      { detector: "iban", action: "redact" },
+      { detector: "credit_card", action: "block" },
+    ],
+  });
+  const text = "card 4532 0151 1283 0366 and iban AT61 1904 3002 3457 3201";
+  const r = evaluate(text, policy);
+  const rec = toLogRecord(r, policy, "chatgpt.com")!;
+  assert.ok(rec);
+  assert.deepEqual(rec.pairs, [
+    { detector: "credit_card", action: "block" },
+    { detector: "iban", action: "redact" },
+  ]);
+  // categories/actions are unchanged in shape and content.
+  assert.deepEqual([...(rec.categories as string[])].sort(), ["credit_card", "iban"]);
+  assert.deepEqual([...(rec.actions as string[])].sort(), ["block", "redact"]);
+});
+
+test("toLogRecord pairs: present under logging:\"content\" too, and never carries matched text", () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "pairs-content-test",
+    hosts: ["chatgpt.com"],
+    defaultAction: "warn",
+    logging: "content",
+    rules: [
+      { detector: "iban", action: "redact" },
+      { detector: "credit_card", action: "block" },
+    ],
+  });
+  const distinctiveIban = "AT611904300234573201";
+  const distinctiveCard = "4532015112830366";
+  const text = `card ${distinctiveCard} and iban ${distinctiveIban}`;
+  const r = evaluate(text, policy);
+  const rec = toLogRecord(r, policy, "chatgpt.com")!;
+  assert.ok(rec);
+  assert.deepEqual(rec.pairs, [
+    { detector: "credit_card", action: "block" },
+    { detector: "iban", action: "redact" },
+  ]);
+  // The `matches` field (content mode only) may legitimately carry the
+  // matched text — but `pairs` itself, serialized on its own, must not.
+  assert.equal(JSON.stringify(rec.pairs).includes(distinctiveIban), false);
+  assert.equal(JSON.stringify(rec.pairs).includes(distinctiveCard), false);
+});
+
+test("toLogRecord pairs: deduped when the same detector/action combination appears in multiple findings", () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "pairs-dedup-test",
+    hosts: ["chatgpt.com"],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [{ detector: "email", action: "redact" }],
+  });
+  const r = evaluate("a@example.com and b@example.com and c@example.com", policy);
+  assert.equal(r.findings.length, 3); // three separate findings, same detector+action
+  const rec = toLogRecord(r, policy, "chatgpt.com")!;
+  assert.deepEqual(rec.pairs, [{ detector: "email", action: "redact" }]);
+});
+
+/* --------------------------------- exceptions (ROADMAP §1.4 #17, contract B) ----------- */
+
+test("exceptions: a matching pattern drops the finding entirely — no block, no warning, no redaction", () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "exceptions-basic",
+    hosts: ["chatgpt.com"],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [{ detector: "credit_card", action: "block" }],
+    exceptions: [
+      { detector: "credit_card", pattern: "^4111[ -]?1111[ -]?1111[ -]?1111$", note: "reserved Visa test PAN" },
+    ],
+  });
+  const testCard = evaluate("card on file: 4111 1111 1111 1111", policy);
+  assert.equal(testCard.findings.length, 0);
+  assert.equal(testCard.blocked, false);
+  assert.equal(testCard.redactedText, "card on file: 4111 1111 1111 1111");
+
+  // A different, real-shaped card is unaffected by the exception.
+  const realCard = evaluate("card on file: 4532 0151 1283 0366", policy);
+  assert.equal(realCard.blocked, true);
+});
+
+test("exceptions: detector scoping — an exception for one detector id does not suppress another", () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "exceptions-detector-scope",
+    hosts: ["chatgpt.com"],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [
+      { detector: "credit_card", action: "block" },
+      { detector: "iban", action: "block" },
+    ],
+    exceptions: [{ detector: "credit_card", pattern: ".*" }], // disables credit_card entirely
+  });
+  const r = evaluate("card 4532 0151 1283 0366 and iban AT61 1904 3002 3457 3201", policy);
+  assert.equal(r.findings.some((f) => f.detector === "credit_card"), false);
+  assert.equal(r.findings.some((f) => f.detector === "iban"), true);
+  assert.equal(r.blocked, true); // iban still blocks
+});
+
+test("exceptions: host scoping — applies only on the listed host, and never applies when evaluate() is called without a host", () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "exceptions-host-scope",
+    hosts: ["chatgpt.com", "internal-tool.example"],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [{ detector: "credit_card", action: "block" }],
+    exceptions: [
+      { detector: "credit_card", pattern: "^4111[ -]?1111[ -]?1111[ -]?1111$", hosts: ["internal-tool.example"] },
+    ],
+  });
+  const text = "card 4111 1111 1111 1111 on file";
+  assert.equal(evaluate(text, policy, "internal-tool.example").blocked, false, "excepted on the listed host");
+  assert.equal(evaluate(text, policy, "chatgpt.com").blocked, true, "not excepted elsewhere");
+  assert.equal(evaluate(text, policy).blocked, true, "not excepted when no host is passed at all");
+});
+
+test("exceptions: dropped BEFORE the bulk_pii distinct-count post-pass counts it — an excepted value is not exposure", () => {
+  const policy = parsePolicy({
+    version: 1,
+    name: "exceptions-bulk-pii-interaction",
+    hosts: ["chatgpt.com"],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [{ detector: "bulk_pii", action: "block" }],
+    exceptions: [{ detector: "email", pattern: "^noreply@internal\\.example$", note: "our own system sender" }],
+  });
+  // 4 genuine distinct customer emails + 1 excepted internal address: without
+  // the exception this would be 5 distinct emails (meets the threshold);
+  // with it, only 4 count, so bulk_pii must not fire.
+  const text =
+    "a@example.com b@example.com c@example.com d@example.com noreply@internal.example";
+  const r = evaluate(text, policy);
+  assert.equal(r.findings.some((f) => f.detector === "bulk_pii"), false);
+  assert.equal(r.findings.some((f) => f.detector === "email" && f.match === "noreply@internal.example"), false);
+});
+
+test("exceptions: an invalid pattern in a hand-built Policy is skipped, not thrown, mirroring custom-rule pattern handling", () => {
+  // Bypasses parsePolicy's own validation (which would reject this) to
+  // exercise evaluate()'s independent guard directly.
+  const policy = {
+    version: 1,
+    name: "exceptions-invalid-pattern",
+    hosts: ["chatgpt.com"],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [{ detector: "credit_card", action: "block" }],
+    exceptions: [{ detector: "credit_card", pattern: "(unclosed" }],
+  } as unknown as Policy;
+  const r = evaluate("card 4532 0151 1283 0366", policy);
+  assert.equal(r.blocked, true); // invalid exception ignored, detection still runs
+});
+
+test("exceptions: parsePolicy validates shape — pattern must compile as RegExp, detector/note strings, hosts an array of strings", () => {
+  const base = {
+    version: 1,
+    name: "exceptions-validation",
+    hosts: [],
+    defaultAction: "warn",
+    logging: "event",
+    rules: [],
+  };
+  assert.throws(() => parsePolicy({ ...base, exceptions: "nope" }), /exceptions must be an array/);
+  assert.throws(() => parsePolicy({ ...base, exceptions: [{ pattern: 123 }] }), /pattern/);
+  assert.throws(() => parsePolicy({ ...base, exceptions: [{ pattern: "(unclosed" }] }), /regular expression/);
+  assert.throws(() => parsePolicy({ ...base, exceptions: [{ pattern: "x", detector: 5 }] }), /detector/);
+  assert.throws(() => parsePolicy({ ...base, exceptions: [{ pattern: "x", note: 5 }] }), /note/);
+  assert.throws(() => parsePolicy({ ...base, exceptions: [{ pattern: "x", hosts: "chatgpt.com" }] }), /hosts/);
+  assert.throws(() => parsePolicy({ ...base, exceptions: [{ pattern: "x", hosts: [5] }] }), /hosts/);
+  assert.equal(parsePolicy(base).exceptions, undefined); // optional
+  const valid = parsePolicy({
+    ...base,
+    exceptions: [{ detector: "credit_card", pattern: "^4111", hosts: ["a.example"], note: "test PAN" }],
+  });
+  assert.equal(valid.exceptions?.length, 1);
+});

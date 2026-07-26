@@ -33,6 +33,12 @@ jobs:
       - name: Build CLI
         run: npm run build:cli
 
+      # Produces apps/extension/engine.bundle.js (loaded by the options page)
+      # and apps/playground/dist. Both are gitignored build output, so the
+      # gate below and the release packaging need this to have run.
+      - name: Build playground and options bundle
+        run: npm run build:playground
+
       - name: No-egress gate
         run: |
           set -euo pipefail
@@ -69,6 +75,9 @@ jobs:
             "apps/extension/background.js"
             "apps/extension/popup.js"
             "apps/extension/popup.html"
+            "apps/extension/options.js"
+            "apps/extension/options.html"
+            "apps/playground"
           )
 
           echo "Scanning for network egress APIs: $NETWORK_PATTERN"

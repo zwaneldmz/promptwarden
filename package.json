@@ -12,6 +12,7 @@
     "typecheck": "node_modules/.bin/tsc -p apps/extension/tsconfig.json --noEmit && node_modules/.bin/tsc -p apps/cli/tsconfig.json --noEmit",
     "test": "npm run build:engine && npm run build:cli && cd packages/policy-engine && node --test 'dist/test/*.test.js' && cd ../../apps/cli && node --test 'test/*.test.mjs'",
     "build:extension": "esbuild apps/extension/src/content.ts --bundle --format=iife --outfile=apps/extension/content.bundle.js --alias:@promptwarden/policy-engine=./packages/policy-engine/src/index.ts && esbuild apps/extension/src/background.ts --bundle --format=iife --outfile=apps/extension/background.js",
+    "build:playground": "node apps/playground/build.mjs",
     "smoke": "node tools/e2e-smoke.mjs"
   },
   "devDependencies": {

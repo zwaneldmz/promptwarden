@@ -11,14 +11,79 @@ const BULK_PII_DETECTORS = new Set(["email", "iban", "credit_card", "phone", "at
 
 const DEFAULT_BULK_PII_THRESHOLD = 5;
 
+interface CompiledException {
+  detector?: string;
+  pattern: RegExp;
+  hosts?: string[];
+}
+
+/**
+ * Compile `policy.exceptions` once per `evaluate()` call. Guarded the same
+ * way the custom-rule loop below guards `DetectorRule.pattern`: an invalid
+ * pattern must not break evaluation. `parsePolicy` already rejects an
+ * invalid pattern at policy-load time, so this catch only matters for a
+ * `Policy` value that reached `evaluate()` without going through it.
+ */
+function compileExceptions(exceptions: Policy["exceptions"]): CompiledException[] {
+  if (!exceptions || exceptions.length === 0) return [];
+  const out: CompiledException[] = [];
+  for (const ex of exceptions) {
+    let pattern: RegExp;
+    try {
+      pattern = new RegExp(ex.pattern);
+    } catch {
+      continue;
+    }
+    out.push({ detector: ex.detector, pattern, hosts: ex.hosts });
+  }
+  return out;
+}
+
+/**
+ * Upper bound on how much of a matched value an exception pattern is tested
+ * against. See `isExcepted`.
+ */
+const MAX_EXCEPTION_TEST_BYTES = 1024;
+
+/**
+ * Does any compiled exception cover this candidate match? `hosts`-scoped
+ * exceptions require the caller to have passed `evaluate()`'s `host`
+ * parameter — an exception cannot claim to be host-restricted and then
+ * apply unconditionally just because the caller didn't say which host it
+ * evaluated.
+ */
+function isExcepted(m: RawMatch, exceptions: CompiledException[], host: string | undefined): boolean {
+  // Test against a bounded prefix, never the whole match. An exception
+  // pattern is admin-supplied but the string it runs against is not: a
+  // `private_key` match is a whole PEM block and a custom rule's match can be
+  // arbitrarily long, so a pattern with catastrophic backtracking would scale
+  // its cost with attacker-controlled input and stall the inline path — which
+  // is synchronous and holds a <10ms budget. Any exception meaningful enough
+  // to allowlist a value is decidable from its opening bytes.
+  for (const ex of exceptions) {
+    if (ex.detector !== undefined && ex.detector !== m.detector) continue;
+    if (ex.hosts !== undefined && (host === undefined || !ex.hosts.includes(host))) continue;
+    const probe =
+      m.match.length > MAX_EXCEPTION_TEST_BYTES ? m.match.slice(0, MAX_EXCEPTION_TEST_BYTES) : m.match;
+    if (ex.pattern.test(probe)) return true;
+  }
+  return false;
+}
+
 /**
  * Evaluate `text` against `policy`.
  *
  * Precedence when spans overlap (e.g. a card number inside a longer string):
  * the stricter action wins, then the longer span.
+ *
+ * `host` is the currently-evaluated host (e.g. `location.hostname` in the
+ * extension, a CLI surface label). It is optional and used only to resolve
+ * `policy.exceptions` entries that carry a `hosts` restriction — omitting it
+ * means host-scoped exceptions never apply, never that they apply
+ * everywhere.
  */
-export function evaluate(text: string, policy: Policy): EvaluationResult {
-  const matches: RawMatch[] = [];
+export function evaluate(text: string, policy: Policy, host?: string): EvaluationResult {
+  const candidates: RawMatch[] = [];
   const ruleFor = new Map(policy.rules.map((r) => [r.detector, r]));
 
   // Built-in detectors: run those the policy mentions, plus everything else
@@ -31,7 +96,7 @@ export function evaluate(text: string, policy: Policy): EvaluationResult {
     const rule = ruleFor.get(id);
     const action = rule ? rule.action : policy.defaultAction;
     if (action === "allow" && !BULK_PII_DETECTORS.has(id)) continue;
-    matches.push(...fn(text));
+    candidates.push(...fn(text));
   }
 
   // Custom regex rules (org-specific: customer ids, project code names, …).
@@ -45,9 +110,18 @@ export function evaluate(text: string, policy: Policy): EvaluationResult {
     }
     for (const m of text.matchAll(re)) {
       if (m[0].length === 0) break; // guard against zero-width infinite loops
-      matches.push({ detector: rule.detector, start: m.index!, end: m.index! + m[0].length, match: m[0] });
+      candidates.push({ detector: rule.detector, start: m.index!, end: m.index! + m[0].length, match: m[0] });
     }
   }
+
+  // Exceptions: known-good values that must never produce a finding, applied
+  // to the raw candidate list — BEFORE candidates become findings (so an
+  // excepted value never reaches `blocked`/`needsWarning`/`redactedText`)
+  // and before the bulk_pii post-pass below counts distinct values (so an
+  // excepted value is not exposure). See the `exceptions` doc comment on
+  // `Policy` for the full matching contract.
+  const exceptions = compileExceptions(policy.exceptions);
+  const matches = exceptions.length === 0 ? candidates : candidates.filter((m) => !isExcepted(m, exceptions, host));
 
   const severity: Record<Action, number> = { allow: 0, observe: 1, warn: 2, redact: 3, block: 4 };
 
@@ -70,55 +144,88 @@ export function evaluate(text: string, policy: Policy): EvaluationResult {
     if (!covered) kept.push(f);
   }
 
-  // bulk_pii post-pass: N+ distinct PII strings in one payload reads as
-  // "someone pasted our whole customer list," even when every individual
-  // category is allow-listed on its own. Counting uses `matches` (the raw,
-  // pre-allow-filter list), so an individually-allowed email still counts
-  // toward the threshold; the synthesized bulk_pii finding's own action is
-  // resolved separately (its own rule entry, else defaultAction). Added to
-  // `kept` after the containment pass so a whole-text bulk_pii span never
-  // swallows the individual findings that justified it.
-  const distinctBulkMatches = new Set(
-    matches.filter((m) => BULK_PII_DETECTORS.has(m.detector)).map((m) => m.match),
-  );
-  const bulkThreshold = policy.bulkPiiThreshold ?? DEFAULT_BULK_PII_THRESHOLD;
-  if (distinctBulkMatches.size >= bulkThreshold) {
-    const bulkRule = ruleFor.get("bulk_pii");
-    const bulkAction: Action = bulkRule ? bulkRule.action : policy.defaultAction;
-    if (bulkAction === "redact") {
-      // Redacting the whole-text span would wipe the entire prompt down to
-      // one label. Redact the contributing PII matches instead: one finding
-      // per distinct span not already redacted/blocked by its own rule, so
-      // the surrounding legitimate text survives.
-      const bulkLabel = bulkRule?.label ?? DEFAULT_LABELS.bulk_pii;
-      const promoted = new Set<string>();
-      for (const m of matches) {
-        if (!BULK_PII_DETECTORS.has(m.detector)) continue;
-        const key = `${m.start}:${m.end}`;
-        if (promoted.has(key)) continue;
-        promoted.add(key);
-        const alreadyHandled = kept.some(
-          (k) => k.start <= m.start && k.end >= m.end && severity[k.action] >= severity.redact,
-        );
-        if (alreadyHandled) continue;
-        kept.push({ detector: "bulk_pii", start: m.start, end: m.end, match: m.match, action: "redact", label: bulkLabel });
+  // bulk_pii post-pass: fires when a SINGLE detector category (email, iban,
+  // credit_card, phone, or at_svnr) reaches N+ DISTINCT values in one
+  // payload — "5 different customers' emails," "5 different IBANs."
+  // Counting is deliberately PER CATEGORY rather than a flat union across
+  // all five (the previous behaviour): an ordinary business email signature
+  // carries one person's own email plus several of THEIR OWN phone numbers
+  // under different labels (office/mobile/fax/direct line) — e.g. 4 distinct
+  // phone numbers + 1 email is 5 distinct values in total, but neither
+  // category individually reaches the threshold, and it is one person's
+  // contact details, not bulk exposure. Requiring the threshold to be met
+  // WITHIN a single category catches the genuine mass-export case (many
+  // distinct values of the SAME kind) without that cross-category false
+  // positive (ROADMAP §1.4 #16(a); fp-corpus.test.ts carries both the
+  // signature fixture that reproduced it and a 5-customer fixture that must
+  // still fire).
+  //
+  // Counting uses `matches` (the raw, pre-allow-filter, post-exception
+  // list), so an individually-allowed category (e.g. email: allow) still
+  // counts toward ITS OWN category's threshold — allowed one-at-a-time but
+  // not as a mass export — while a value dropped by a policy exception
+  // never counts at all (see `exceptions` above).
+  //
+  // Per ROADMAP §1.4 #16(b), bulk_pii is a synthetic meta-detector: unlike
+  // every other detector it has NO rule-free fallback to `defaultAction`.
+  // With no explicit `bulk_pii` rule in the policy it never fires, however
+  // far past the threshold a category goes — otherwise it would silently
+  // activate on any policy whose defaultAction isn't "allow", without the
+  // policy author ever having opted into it.
+  const bulkRule = ruleFor.get("bulk_pii");
+  if (bulkRule) {
+    const distinctByCategory = new Map<string, Set<string>>();
+    for (const m of matches) {
+      if (!BULK_PII_DETECTORS.has(m.detector)) continue;
+      let bucket = distinctByCategory.get(m.detector);
+      if (!bucket) {
+        bucket = new Set();
+        distinctByCategory.set(m.detector, bucket);
       }
-    } else if (bulkAction !== "allow") {
-      const bulkLabel = bulkRule?.label ?? DEFAULT_LABELS.bulk_pii;
-      // Deliberately NOT `match: text` — this finding's span covers the whole
-      // evaluated text (see comment above), and `toLogRecord` copies `match`
-      // verbatim under logging:"content". A synthetic, count-style token
-      // keeps the finding shape intact (start/end still describe "the whole
-      // text was implicated") without ever putting the whole prompt — or a
-      // whole extracted spreadsheet, via scanFiles — into a persisted record.
-      kept.push({
-        detector: "bulk_pii",
-        start: 0,
-        end: text.length,
-        match: `${distinctBulkMatches.size} distinct matches`,
-        action: bulkAction,
-        label: bulkLabel,
-      });
+      bucket.add(m.match);
+    }
+    const bulkThreshold = policy.bulkPiiThreshold ?? DEFAULT_BULK_PII_THRESHOLD;
+    const triggered = [...distinctByCategory.values()].some((bucket) => bucket.size >= bulkThreshold);
+    if (triggered) {
+      const bulkAction: Action = bulkRule.action;
+      if (bulkAction === "redact") {
+        // Redacting the whole-text span would wipe the entire prompt down to
+        // one label. Redact the contributing PII matches instead: one finding
+        // per distinct span not already redacted/blocked by its own rule, so
+        // the surrounding legitimate text survives.
+        const bulkLabel = bulkRule.label ?? DEFAULT_LABELS.bulk_pii;
+        const promoted = new Set<string>();
+        for (const m of matches) {
+          if (!BULK_PII_DETECTORS.has(m.detector)) continue;
+          const key = `${m.start}:${m.end}`;
+          if (promoted.has(key)) continue;
+          promoted.add(key);
+          const alreadyHandled = kept.some(
+            (k) => k.start <= m.start && k.end >= m.end && severity[k.action] >= severity.redact,
+          );
+          if (alreadyHandled) continue;
+          kept.push({ detector: "bulk_pii", start: m.start, end: m.end, match: m.match, action: "redact", label: bulkLabel });
+        }
+      } else if (bulkAction !== "allow") {
+        const bulkLabel = bulkRule.label ?? DEFAULT_LABELS.bulk_pii;
+        const totalDistinct = new Set(
+          matches.filter((m) => BULK_PII_DETECTORS.has(m.detector)).map((m) => m.match),
+        ).size;
+        // Deliberately NOT `match: text` — this finding's span covers the whole
+        // evaluated text (see comment above), and `toLogRecord` copies `match`
+        // verbatim under logging:"content". A synthetic, count-style token
+        // keeps the finding shape intact (start/end still describe "the whole
+        // text was implicated") without ever putting the whole prompt — or a
+        // whole extracted spreadsheet, via scanFiles — into a persisted record.
+        kept.push({
+          detector: "bulk_pii",
+          start: 0,
+          end: text.length,
+          match: `${totalDistinct} distinct matches`,
+          action: bulkAction,
+          label: bulkLabel,
+        });
+      }
     }
   }
 
@@ -154,6 +261,27 @@ function truncateMatch(match: string): string {
 }
 
 /**
+ * `categories` and `actions` are each independently deduped, so a record
+ * with e.g. a card at `block` and an IBAN at `redact` loses which detector
+ * had which action — a consumer (the popup's per-rule tuning view) can only
+ * guess a single "primary" action for every category listed. `pairs` keeps
+ * detector and action bound together — still carrying no matched text — so
+ * an "observe mode" reader can tell exactly which detector took which
+ * action. Deduped (a detector firing twice with the same action is one
+ * pair) and sorted by detector then action so the record is deterministic
+ * regardless of finding order.
+ */
+function dedupedSortedPairs(findings: Finding[]): Array<{ detector: string; action: Action }> {
+  const seen = new Map<string, { detector: string; action: Action }>();
+  for (const f of findings) {
+    seen.set(`${f.detector} ${f.action}`, { detector: f.detector, action: f.action });
+  }
+  return [...seen.values()].sort(
+    (a, b) => a.detector.localeCompare(b.detector) || a.action.localeCompare(b.action),
+  );
+}
+
+/**
  * Produce the log record for an evaluation, honouring the policy's logging
  * mode. This is the only function that should ever build persisted output —
  * keeping the privacy decision in one place makes it auditable.
@@ -170,6 +298,7 @@ export function toLogRecord(
     policy: policy.name,
     categories: [...new Set(result.findings.map((f) => f.detector))],
     actions: [...new Set(result.findings.map((f) => f.action))],
+    pairs: dedupedSortedPairs(result.findings),
   };
   if (policy.logging === "event") return base;
   return {

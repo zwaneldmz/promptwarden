@@ -82,7 +82,12 @@ test("engine evaluates a realistic 10 KB prompt in under 10ms median (50 runs, a
   for (const d of ["credit_card", "iban", "phone", "email", "api_key", "at_svnr", "customer_id", "project_code", "internal_ref"]) {
     assert.ok(found.has(d), `detector ${d} found nothing in the fixture`);
   }
-  assert.ok(check.findings.length >= 11, `expected >= 11 findings, got ${check.findings.length}`);
+  // 9 detector categories, one finding each in this fixture (was >= 11: two
+  // of those findings used to be a spuriously-inherited bulk_pii finding —
+  // this policy has no explicit `bulk_pii` rule, and per ROADMAP §1.4
+  // #16(b) bulk_pii no longer activates implicitly off `defaultAction`).
+  assert.ok(check.findings.length >= 9, `expected >= 9 findings, got ${check.findings.length}`);
+  assert.equal(found.has("bulk_pii"), false, "bulk_pii must not fire without an explicit rule");
 
   // Warm up (JIT, hidden classes, etc.) — not measured.
   for (let i = 0; i < 5; i++) {

@@ -36,6 +36,24 @@ export interface DetectorRule {
   label?: string;
 }
 
+/**
+ * A known-good value that must never produce a finding, even though a
+ * detector would otherwise match it — e.g. the reserved Luhn-valid test
+ * card numbers (4111 1111 1111 1111, …) that engineers paste constantly, or
+ * an internal example host. See the `exceptions` doc comment on `Policy`
+ * for the full matching contract.
+ */
+export interface PolicyException {
+  /** Restrict this exception to one detector id; omit to apply to all. */
+  detector?: string;
+  /** Compiled as a RegExp and tested against a finding's matched text. */
+  pattern: string;
+  /** Restrict this exception to these evaluated hosts; omit to apply everywhere. */
+  hosts?: string[];
+  /** Free-text justification. Not persisted, not shown to the user. */
+  note?: string;
+}
+
 /** Logging levels, most-private first. EU-safe default is "event". */
 export type LoggingMode =
   | "off" // nothing is recorded
@@ -65,12 +83,41 @@ export interface Policy {
    */
   retentionDays?: number;
   /**
-   * Minimum count of DISTINCT matched strings across the email/iban/
-   * credit_card/phone/at_svnr detectors (in one evaluated text) before the
-   * synthetic "bulk_pii" finding fires — "someone pasted our whole customer
-   * list." Positive integer. Default 5.
+   * Minimum count of DISTINCT matched strings, WITHIN A SINGLE detector
+   * category (email, iban, credit_card, phone, or at_svnr — never summed
+   * across categories; see engine.ts evaluate()), in one evaluated text
+   * before the synthetic "bulk_pii" finding fires — "someone pasted our
+   * whole customer list." Positive integer. Default 5. `bulk_pii` only
+   * fires when the policy carries an explicit `bulk_pii` rule; it is never
+   * activated implicitly by `defaultAction`.
    */
   bulkPiiThreshold?: number;
+  /**
+   * Known-good values that should never produce a finding, applied after
+   * detection but before a finding can block/warn/redact or count toward
+   * `bulk_pii` — an excepted value is not exposure. Each entry is a
+   * strictness REDUCTION: it can only ever drop a finding a detector would
+   * otherwise raise, never add one. A finding is dropped when:
+   *
+   *   - the exception's compiled `pattern` matches the finding's matched
+   *     text (via `RegExp.test`, so a partial match is enough — a pattern
+   *     of `.*` matches everything a detector produces and so effectively
+   *     DISABLES that detector; give such an exception a `note` explaining
+   *     why that's intentional), AND
+   *   - if `detector` is set, the finding's detector id equals it, AND
+   *   - if `hosts` is set, the host passed to `evaluate()` is in that list.
+   *
+   * An exception whose `pattern` fails to compile as a `RegExp` is rejected
+   * by `parsePolicy` (mirrors the same guard already applied to custom
+   * `DetectorRule.pattern` values).
+   *
+   * SECURITY: a repo-local `.promptwarden.json` (see
+   * apps/cli/src/policy.ts's strictness-monotonic clamp) strips
+   * `exceptions` entirely before use — an untrusted checkout must not be
+   * able to introduce or extend the set of values that silently bypass
+   * detection any more than it can lower a rule's action.
+   */
+  exceptions?: PolicyException[];
 }
 
 export interface Finding {
@@ -96,6 +143,13 @@ export interface EvaluationResult {
 
 const ACTIONS: Action[] = ["allow", "observe", "warn", "redact", "block"];
 const LOGGING: LoggingMode[] = ["off", "event", "content"];
+
+/**
+ * Ceiling for `retentionDays` (ROADMAP §1.1 #12). Without this, a managed or
+ * repo-local policy setting e.g. 36500 turns a 90-day local event buffer
+ * into an effectively permanent archive of what this device flagged.
+ */
+export const MAX_RETENTION_DAYS = 365;
 
 /** Validate an untrusted policy document. Throws with a readable message. */
 export function parsePolicy(input: unknown): Policy {
@@ -128,9 +182,12 @@ export function parsePolicy(input: unknown): Policy {
   }
   if (
     p.retentionDays !== undefined &&
-    (typeof p.retentionDays !== "number" || !Number.isFinite(p.retentionDays) || p.retentionDays <= 0)
+    (typeof p.retentionDays !== "number" ||
+      !Number.isFinite(p.retentionDays) ||
+      p.retentionDays <= 0 ||
+      p.retentionDays > MAX_RETENTION_DAYS)
   ) {
-    throw new Error("retentionDays must be a positive number");
+    throw new Error(`retentionDays must be a positive number no greater than ${MAX_RETENTION_DAYS}`);
   }
   if (
     p.bulkPiiThreshold !== undefined &&
@@ -148,6 +205,30 @@ export function parsePolicy(input: unknown): Policy {
     }
     if (r.pattern !== undefined && typeof r.pattern !== "string") {
       throw new Error(`Rule "${r.detector}" pattern must be a string`);
+    }
+  }
+  if (p.exceptions !== undefined) {
+    if (!Array.isArray(p.exceptions)) throw new Error("Policy exceptions must be an array");
+    for (const ex of p.exceptions as Array<Record<string, unknown>>) {
+      if (typeof ex.pattern !== "string") {
+        throw new Error("Policy exception needs a pattern string");
+      }
+      try {
+        new RegExp(ex.pattern);
+      } catch (err) {
+        throw new Error(
+          `Policy exception pattern ${JSON.stringify(ex.pattern)} is not a valid regular expression: ${(err as Error).message}`,
+        );
+      }
+      if (ex.detector !== undefined && typeof ex.detector !== "string") {
+        throw new Error("Policy exception detector must be a string");
+      }
+      if (ex.note !== undefined && typeof ex.note !== "string") {
+        throw new Error("Policy exception note must be a string");
+      }
+      if (ex.hosts !== undefined && (!Array.isArray(ex.hosts) || ex.hosts.some((h) => typeof h !== "string"))) {
+        throw new Error("Policy exception hosts must be an array of strings");
+      }
     }
   }
   return input as Policy;

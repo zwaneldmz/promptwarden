@@ -10,6 +10,12 @@ import {
   isSafeLocalPolicyFile,
   loadPolicyFrom,
 } from "../dist/policy.js";
+// `@promptwarden/policy-engine` is not a real resolvable package (no
+// package.json; it only resolves via esbuild's --alias at CLI-build time and
+// tsconfig `paths` at typecheck time — see ROADMAP §1.1 #24). For a plain
+// `node --test` run against a built engine, reach it via the built engine
+// package's own dist path instead.
+import { evaluate } from "../../../packages/policy-engine/dist/src/engine.js";
 
 async function tmpDir(prefix) {
   return mkdtemp(join(tmpdir(), prefix));
@@ -244,6 +250,52 @@ test("applyStrictnessMonotonicClamp raises a weakened rule, keeps a stricter one
   assert.ok(ruleFor("at_svnr"), "a floor-constrained detector missing from the candidate must be synthesized");
   assert.equal(ruleFor("at_svnr").action, "warn");
   assert.equal(clamped.logging, "event", 'logging:"content" must never survive the repo-local layer');
+});
+
+test("applyStrictnessMonotonicClamp strips exceptions entirely — a repo-local policy cannot introduce or extend them", () => {
+  // exceptions is a strictness REDUCTION (ROADMAP §1.4 #17): a repo-local
+  // .promptwarden.json must not be able to suppress a finding the floor
+  // requires by shipping a broad exception pattern.
+  const floor = BUILTIN_DEFAULT_POLICY;
+  const candidate = policyDoc({
+    name: "untrusted-repo-local-with-exception",
+    defaultAction: "allow",
+    logging: "event",
+    rules: [{ detector: "credit_card", action: "block" }], // stricter than the floor, kept as-is
+    exceptions: [{ detector: "credit_card", pattern: ".*", note: "attempts to disable credit_card entirely" }],
+  });
+
+  const clamped = applyStrictnessMonotonicClamp(candidate, floor);
+  assert.equal(clamped.exceptions, undefined, "exceptions must not survive the clamp");
+});
+
+test("loadPolicyFrom: a repo-local policy carrying an exception cannot suppress a finding end-to-end", async () => {
+  const root = await tmpDir("pw-policy-repo-exception-");
+  const cwd = join(root, "repo");
+  await mkdir(cwd, { recursive: true });
+  await writeFile(
+    join(cwd, ".promptwarden.json"),
+    JSON.stringify(
+      policyDoc({
+        name: "weak-repo-local-with-exception",
+        defaultAction: "allow",
+        logging: "event",
+        rules: [{ detector: "credit_card", action: "block" }],
+        // A broad exception that, if it survived the clamp, would suppress
+        // every credit_card finding — exactly what an untrusted `git clone`
+        // must not be able to do.
+        exceptions: [{ detector: "credit_card", pattern: ".*" }],
+      }),
+    ),
+  );
+
+  const paths = await emptyPaths(cwd);
+  const { policy, source } = await loadPolicyFrom(paths);
+  assert.match(source, /strictness-monotonic/);
+  assert.equal(policy.exceptions, undefined);
+
+  const r = evaluate("card on file: 4532 0151 1283 0366", policy); // Luhn-valid Visa test number
+  assert.equal(r.blocked, true, "the repo-local exception must not have suppressed the credit_card finding");
 });
 
 test("loadPolicyFrom applies the clamp end-to-end to a resolved repo-local policy", async () => {

@@ -119,9 +119,13 @@ export async function scanFiles(files: File[], policy: Policy): Promise<FileScan
     }
     findings.push(...scanned.findings);
   }
-  // NOTE: unreadable-only scans stay silent under onError:"closed", which
-  // today only governs whole-scan failures, not per-file read errors.
-  if (findings.length === 0) return null;
+  // A scan that found nothing AND read everything is genuinely clean —
+  // that's the only case that returns null. One or more unreadable files
+  // (oversized, or a read/extract failure) must still surface as a result
+  // even with zero findings, so onError:"closed" can apply and the "open"
+  // path can tell the user something was skipped instead of releasing the
+  // upload with no signal at all.
+  if (findings.length === 0 && unreadable === 0) return null;
 
   const blocked = findings.some((f) => f.action === "block");
   // Observe-actioned findings are recorded but never interrupt; only

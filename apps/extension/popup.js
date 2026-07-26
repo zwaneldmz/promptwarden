@@ -19,15 +19,26 @@
   // Explicit allowlist: only these fields are ever read off a stored event
   // record. `match` / `matches` (present only under logging: "content") are
   // never touched here, so the popup can never render prompt content.
+  //
+  // `pairs` (detector, action) is a newer field than `categories`/`actions`
+  // — a record written before it landed simply won't have it. Validated the
+  // same way as everything else here: non-array/malformed entries are
+  // dropped rather than rendered.
   function safeFields(record) {
     const r = record && typeof record === "object" ? record : {};
     const actions = Array.isArray(r.actions) ? r.actions.filter((a) => typeof a === "string") : [];
     const categories = Array.isArray(r.categories) ? r.categories.filter((c) => typeof c === "string") : [];
+    const pairs = Array.isArray(r.pairs)
+      ? r.pairs
+          .filter((p) => p && typeof p === "object" && typeof p.detector === "string" && typeof p.action === "string")
+          .map((p) => ({ detector: p.detector, action: p.action }))
+      : [];
     return {
       ts: typeof r.ts === "string" ? r.ts : null,
       host: typeof r.host === "string" ? r.host : "–",
       actions,
       categories,
+      pairs,
     };
   }
 
@@ -282,14 +293,31 @@
       return;
     }
     for (const ev of recent) {
-      const { ts, host, actions, categories } = safeFields(ev);
-      const action = primaryAction(actions) ?? (actions[0] || "event");
+      const { ts, host, actions, categories, pairs } = safeFields(ev);
       const li = document.createElement("li");
+      // `pairs` says which detector had which action — a precise
+      // replacement for the old primaryAction-over-every-category guess.
+      // Records written before `pairs` existed fall back to the previous
+      // rendering so old events don't disappear or misrender.
+      const metaHtml =
+        pairs.length > 0
+          ? pairs
+              .map(
+                (p) =>
+                  `<span class="ev-action ${escapeHtml(p.action)}">${escapeHtml(p.action)}</span>${escapeHtml(p.detector)}`,
+              )
+              .join(" ")
+          : (() => {
+              const action = primaryAction(actions) ?? (actions[0] || "event");
+              return (
+                `<span class="ev-action ${escapeHtml(action)}">${escapeHtml(action)}</span>` +
+                `${escapeHtml(categories.join(", ") || "–")}`
+              );
+            })();
       li.innerHTML =
         `<div class="ev-top"><span class="ev-host">${escapeHtml(host)}</span>` +
         `<span class="ev-time">${escapeHtml(formatTime(ts))}</span></div>` +
-        `<div class="ev-meta"><span class="ev-action ${escapeHtml(action)}">${escapeHtml(action)}</span>` +
-        `${escapeHtml(categories.join(", ") || "–")}</div>`;
+        `<div class="ev-meta">${metaHtml}</div>`;
       list.appendChild(li);
     }
   }
@@ -417,6 +445,30 @@
       window.open(url, "_blank", "noopener,noreferrer");
     });
   });
+
+  // Inserted here rather than in popup.html: this file's ownership doesn't
+  // extend to that markup, and a plain DOM insertion keeps the same visual
+  // language (dark surface, blue accent) without needing a new CSS rule
+  // there. Idempotent so a stray double-call never produces two buttons.
+  // Requires the manifest's "options_ui" entry (added separately) — without
+  // it, chrome.runtime.openOptionsPage() rejects and the click is a no-op.
+  function ensureOptionsButton() {
+    if (document.getElementById("open-options")) return;
+    const badge = document.getElementById("mode");
+    if (!badge || !badge.parentNode) return;
+    const btn = document.createElement("button");
+    btn.id = "open-options";
+    btn.type = "button";
+    btn.textContent = "Open policy settings";
+    btn.style.cssText =
+      "display:block;width:100%;margin-top:10px;padding:6px 0;border-radius:5px;" +
+      "border:1px solid #2c4a72;background:#171d24;color:#9fd0ff;font:inherit;cursor:pointer;";
+    btn.addEventListener("click", () => {
+      if (chrome.runtime.openOptionsPage) chrome.runtime.openOptionsPage();
+    });
+    badge.insertAdjacentElement("afterend", btn);
+  }
+  ensureOptionsButton();
 
   await Promise.all([refresh(), refreshExtraHostsNotice()]);
 })();

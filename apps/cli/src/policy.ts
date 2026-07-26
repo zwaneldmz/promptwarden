@@ -110,6 +110,16 @@ export function applyStrictnessMonotonicClamp(candidate: Policy, floor: Policy):
     rules: clampedRules,
     defaultAction: raiseAction(candidate.defaultAction, floor.defaultAction),
     logging: candidate.logging === "content" ? "event" : candidate.logging,
+    // `exceptions` (ROADMAP §1.4 #17) is a strictness REDUCTION — each entry
+    // can only ever drop a finding a detector would otherwise raise, never
+    // add one. Unlike a rule's action, there is no "floor" to raise an
+    // exception list toward: the only strictness-monotonic value for the
+    // untrusted repo-local layer is none at all, so it is stripped outright
+    // rather than merged/intersected with the floor's (which never carries
+    // any). Without this, a `.promptwarden.json` inside an untrusted `git
+    // clone` could ship an exception with a broad pattern (e.g. `.*`) that
+    // silently suppresses every finding for a detector the floor requires.
+    exceptions: undefined,
   };
 }
 

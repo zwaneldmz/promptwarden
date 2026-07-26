@@ -421,7 +421,17 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 chrome.permissions.onAdded.addListener(() => syncExtraHostCoverage());
 chrome.permissions.onRemoved.addListener(() => syncExtraHostCoverage());
 
-chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg: Message, sender, sendResponse) => {
+  // Belt-and-braces alongside the manifest's `externally_connectable: { ids:
+  // [] }`: that key is the real control (Chrome never routes another
+  // extension's sendMessage here at all once it's set), but this check
+  // stands on its own if a future manifest edit ever loosens or drops it.
+  // Every legitimate sender — this extension's content scripts, popup,
+  // options page — carries `sender.id === chrome.runtime.id`; anything else
+  // (another installed extension forging a "pw-event"/"diagnostic" message
+  // to plant fake records or evict real ones from the 500-cap buffer) is
+  // rejected outright, with no response.
+  if (sender.id !== chrome.runtime.id) return false;
   if (msg.type === "get-policy") {
     resolvePolicy(true).then((resolved) => {
       sendResponse({ policy: resolved.policy, source: resolved.source, errored: resolved.errored });

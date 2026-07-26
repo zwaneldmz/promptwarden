@@ -1,0 +1,370 @@
+name: Release
+
+# Builds, re-verifies, packages, checksums, keylessly signs, attests build
+# provenance for, and publishes a GitHub release for a `vX.Y.Z` tag.
+#
+# See docs/RELEASING.md for the human procedure (version bump locations,
+# tagging convention) and — most importantly — the exact `cosign verify-blob`
+# invocation a USER runs to verify a downloaded release before trusting it.
+# That doc and this file describe the same pipeline; keep them in sync.
+#
+# Scope, deliberately: this packages the browser extension (as a zip of
+# runtime files, for self-hosted CRX packing — see docs/DEPLOY_SELF_HOSTED_CRX.md)
+# and the CLI (as an npm tarball via `npm pack`). It does NOT publish to the
+# Chrome Web Store / Edge Add-ons (those re-sign with their own key and mint a
+# different extension ID — see docs/RELEASING.md, "Chrome Web Store
+# re-signing") or to the npm registry (`npm publish` is a separate, later,
+# deliberate step a maintainer runs by hand once the package is ready to be
+# public under the `promptwarden` name — this workflow only proves the
+# tarball it *would* publish is exactly what CI verified). It also does not
+# package apps/vscode — that extension has no build script wired into the
+# root typecheck/test/build commands yet and is out of scope here.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: >-
+          Existing tag to (re-)build and release, e.g. v0.2.0. Only for
+          re-running a release that already has a tag (a stalled run, a
+          signing outage, etc). Creating a NEW release is always done by
+          pushing the tag itself, not by dispatching this workflow with no
+          ref — see docs/RELEASING.md.
+        required: false
+        type: string
+
+# Default: no access. The job below elevates to exactly what its three
+# privileged operations need, and nothing else (no issues/packages/PR write).
+permissions:
+  contents: read
+
+# One release build per tag at a time; never auto-cancel a signing/publish
+# run that's already in flight for that tag.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, verify, sign, attest, and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release, upload assets
+      id-token: write # OIDC token for cosign + attest-build-provenance keyless signing
+      attestations: write # publish the build provenance attestation
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Resolve and validate release version
+        id: version
+        env:
+          # Passed through env, not interpolated directly into the script
+          # below, so a value containing shell metacharacters is just data,
+          # never executable — workflow_dispatch requires write access to
+          # trigger, so this isn't attacker-controlled the way an issue
+          # title would be, but there's no reason to rely on that.
+          DISPATCH_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+
+          REF_NAME="$DISPATCH_REF"
+          if [ -z "$REF_NAME" ]; then
+            REF_NAME="$GITHUB_REF_NAME"
+          fi
+
+          if [[ ! "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$REF_NAME' is not a release tag of the form vX.Y.Z. This workflow only builds tags in that shape — see docs/RELEASING.md 'Tagging convention'."
+            exit 1
+          fi
+          VERSION="${REF_NAME#v}"
+
+          # The tag is the single source of truth for "what version is
+          # this" everywhere else in the pipeline (zip name, tarball name,
+          # release title). Refuse to publish if the two manifests that
+          # separately declare a version disagree with the tag — that
+          # mismatch means someone forgot a bump step in docs/RELEASING.md,
+          # and shipping anyway would produce an artifact whose filename
+          # lies about what's inside it.
+          EXT_VERSION="$(node -p "require('./apps/extension/manifest.json').version")"
+          CLI_VERSION="$(node -p "require('./apps/cli/package.json').version")"
+          if [ "$VERSION" != "$EXT_VERSION" ] || [ "$VERSION" != "$CLI_VERSION" ]; then
+            echo "::error::Tag $REF_NAME (version $VERSION) does not match apps/extension/manifest.json (version $EXT_VERSION) and/or apps/cli/package.json (version $CLI_VERSION). Bump both to $VERSION, commit, then re-tag — see docs/RELEASING.md 'Version bump locations'."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $REF_NAME — extension and CLI manifests agree on version $VERSION."
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ---- Everything from here down through "Fixture hygiene gate" is the
+      # same gate set .github/workflows/ci.yml runs on every push/PR — a
+      # release must never be able to ship something CI would have
+      # rejected. The no-egress and fixture-hygiene steps are a deliberate,
+      # commented COPY of ci.yml's steps of the same name, not a
+      # workflow_call into ci.yml: this file's owner does not also own
+      # ci.yml, so extracting a shared reusable workflow (the DRY fix) is
+      # tracked as a follow-up in docs/RELEASING.md rather than done here.
+      # If you change one, change the other. ----
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (includes <10ms bench gate)
+        run: npm test
+
+      - name: Build extension bundles
+        run: npm run build:extension
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      # Produces apps/extension/engine.bundle.js (loaded by the options page)
+      # and apps/playground/dist. Both are gitignored build output, so the
+      # gate below and the release packaging need this to have run.
+      - name: Build playground and options bundle
+        run: npm run build:playground
+
+      - name: No-egress gate (mirrors ci.yml — keep in sync)
+        run: |
+          set -euo pipefail
+
+          NETWORK_PATTERN='fetch\(|XMLHttpRequest|sendBeacon|WebSocket\(|EventSource\(|import\(|new Image\(|connectNative|node:http|node:https|node:net|node:tls|node:dgram|node:dns'
+
+          CHILD_PROCESS_PATTERN='child_process|execSync|spawnSync|createRequire'
+          CHILD_PROCESS_EXCEPT_RE='^(apps/cli/src/mcp/gateway\.ts|apps/cli/dist/mcp/gateway\.js|apps/cli/dist/cli\.js):'
+
+          TARGETS=(
+            "apps/extension/src"
+            "packages/policy-engine/src"
+            "apps/cli/src"
+            "apps/cli/dist"
+            "apps/extension/content.bundle.js"
+            "apps/extension/background.js"
+            "apps/extension/popup.js"
+            "apps/extension/popup.html"
+            "apps/extension/options.js"
+            "apps/extension/options.html"
+            "apps/playground"
+          )
+
+          echo "Scanning for network egress APIs: $NETWORK_PATTERN"
+          FOUND=0
+          for t in "${TARGETS[@]}"; do
+            if [ -e "$t" ]; then
+              DOC_MARKER='no-egress-doc'
+              MATCHES="$(grep -rnE "$NETWORK_PATTERN" "$t" | grep -v "$DOC_MARKER" || true)"
+              if [ -n "$MATCHES" ]; then
+                echo "$MATCHES"
+                FOUND=1
+              fi
+            else
+              echo "::error::no-egress gate target missing: $t"
+              FOUND=1
+            fi
+          done
+
+          echo "Scanning for child_process usage (reviewed carve-out: $CHILD_PROCESS_EXCEPT_RE): $CHILD_PROCESS_PATTERN"
+          for t in "${TARGETS[@]}"; do
+            if [ ! -e "$t" ]; then
+              continue
+            fi
+            if [ -f "$t" ]; then
+              MATCHES="$(grep -nE "$CHILD_PROCESS_PATTERN" "$t" | sed "s|^|$t:|" | grep -vE "$CHILD_PROCESS_EXCEPT_RE" || true)"
+              if [ -n "$MATCHES" ]; then
+                echo "$MATCHES"
+                FOUND=1
+              fi
+            else
+              MATCHES="$(grep -rnE "$CHILD_PROCESS_PATTERN" "$t" | grep -vE "$CHILD_PROCESS_EXCEPT_RE" || true)"
+              if [ -n "$MATCHES" ]; then
+                echo "$MATCHES"
+                FOUND=1
+              fi
+            fi
+          done
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo "::error::NO-EGRESS GATE FAILED — refusing to release. See the matching step in ci.yml for what this checks."
+            exit 1
+          fi
+          echo "No-egress gate passed."
+
+      - name: Fixture hygiene gate (mirrors ci.yml — keep in sync)
+        run: |
+          set -euo pipefail
+
+          FIXTURE_PATTERN='\b(AKIA|ASIA)[0-9A-Z]{16}\b'
+          FIXTURE_PATTERN+='|\bgh[pousr]_[A-Za-z0-9]{20,}\b'
+          FIXTURE_PATTERN+='|\bgithub_pat_[A-Za-z0-9_]{20,}\b'
+          FIXTURE_PATTERN+='|\bxox[baprs]-[A-Za-z0-9-]{10,}\b'
+          FIXTURE_PATTERN+='|\bAIza[0-9A-Za-z_-]{20,}\b'
+          FIXTURE_PATTERN+='|\b(sk|rk)_live_[A-Za-z0-9]{10,}\b'
+          FIXTURE_PATTERN+='|\bsk-ant-[A-Za-z0-9_-]{10,}\b'
+          FIXTURE_PATTERN+='|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+          FIXTURE_PATTERN+='|[a-zA-Z][a-zA-Z0-9+.-]*://[^[:space:]:/@$"'"'"'\`{}]+:[^[:space:]@$"'"'"'\`{}]+@'
+
+          TEST_DIRS=(
+            "packages/policy-engine/test"
+            "apps/cli/test"
+          )
+
+          echo "Scanning tracked test files for credential-shaped literals: $FIXTURE_PATTERN"
+          FOUND=0
+          for d in "${TEST_DIRS[@]}"; do
+            if [ ! -d "$d" ]; then
+              echo "::error::fixture hygiene gate target missing: $d"
+              FOUND=1
+              continue
+            fi
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              MATCHES="$(grep -nE "$FIXTURE_PATTERN" "$f" || true)"
+              if [ -n "$MATCHES" ]; then
+                echo "$MATCHES" | sed "s|^|$f:|"
+                FOUND=1
+              fi
+            done < <(git ls-files "$d")
+          done
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo "::error::FIXTURE HYGIENE GATE FAILED — refusing to release. See the matching step in ci.yml for what this checks."
+            exit 1
+          fi
+          echo "Fixture hygiene gate passed."
+
+      - name: Package extension zip (runtime files only)
+        id: package_extension
+        run: |
+          set -euo pipefail
+
+          STAGE_ROOT="release-stage"
+          STAGE="$STAGE_ROOT/promptwarden-extension"
+          rm -rf "$STAGE_ROOT"
+          mkdir -p "$STAGE/icons"
+
+          # Exactly what chrome://extensions needs to load and run this —
+          # no src/, tsconfig, node_modules, or dev config. See
+          # docs/ROADMAP.md item 21 and apps/extension/manifest.json for why
+          # each of these files/dirs is the complete runtime set.
+          cp apps/extension/manifest.json "$STAGE/"
+          cp apps/extension/background.js "$STAGE/"
+          cp apps/extension/content.bundle.js "$STAGE/"
+          cp apps/extension/popup.html "$STAGE/"
+          cp apps/extension/popup.js "$STAGE/"
+          # manifest.json declares options_ui, so the options page and the
+          # engine bundle it loads are part of the runtime set — shipping the
+          # manifest without them yields an extension whose options page 404s.
+          cp apps/extension/options.html "$STAGE/"
+          cp apps/extension/options.js "$STAGE/"
+          cp apps/extension/engine.bundle.js "$STAGE/"
+          cp apps/extension/managed_schema.json "$STAGE/"
+          cp apps/extension/icons/*.png "$STAGE/icons/"
+
+          # Fixed per-file timestamps plus an explicit, sorted file list fed
+          # to zip via -@ (rather than `zip -r`'s directory-order-dependent
+          # traversal) make the archive's bytes deterministic across
+          # independent builds of the same source. Verified locally
+          # (macOS, Info-ZIP): two independent stage+zip cycles of identical
+          # input produced byte-identical output — see docs/RELEASING.md
+          # for the caveat that this hasn't been independently confirmed
+          # against the Linux runner's zip build.
+          find "$STAGE" -exec touch -t 202001010000 {} +
+
+          ZIP_NAME="promptwarden-extension-v${{ steps.version.outputs.version }}.zip"
+          ( cd "$STAGE_ROOT" && find promptwarden-extension -type f | sort | zip -X -D "../$ZIP_NAME" -@ )
+
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          unzip -l "$ZIP_NAME"
+
+      - name: Package CLI tarball
+        id: package_cli
+        run: |
+          set -euo pipefail
+
+          OUT_DIR="$(pwd)"
+          # apps/cli/package.json's "files": ["dist"] already scopes this to
+          # exactly the built bundles + package.json — no src/, test/, or
+          # tsconfig — so a plain `npm pack` is the whole packaging step.
+          ( cd apps/cli && npm pack --pack-destination "$OUT_DIR" )
+
+          TARBALL_NAME="promptwarden-${{ steps.version.outputs.version }}.tgz"
+          if [ ! -f "$TARBALL_NAME" ]; then
+            echo "::error::expected $TARBALL_NAME after 'npm pack' in apps/cli, but it wasn't produced. Directory listing:"
+            ls -la .
+            exit 1
+          fi
+
+          echo "tarball_name=$TARBALL_NAME" >> "$GITHUB_OUTPUT"
+          tar -tzf "$TARBALL_NAME"
+
+      - name: Generate SHA256SUMS
+        run: |
+          set -euo pipefail
+          sha256sum \
+            "${{ steps.package_extension.outputs.zip_name }}" \
+            "${{ steps.package_cli.outputs.tarball_name }}" \
+            > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign SHA256SUMS (cosign keyless — Sigstore Fulcio/Rekor via this job's OIDC token)
+        run: |
+          set -euo pipefail
+          # No key ever exists: cosign exchanges the job's OIDC token (see
+          # `id-token: write` above) for a short-lived Fulcio signing
+          # certificate bound to this exact repo+workflow+ref, signs with
+          # an ephemeral keypair, and publishes the signing event to the
+          # public Rekor transparency log. `--yes` skips the interactive
+          # confirmation prompt (there is no TTY in CI to answer it).
+          cosign sign-blob \
+            --yes \
+            --output-signature SHA256SUMS.sig \
+            --output-certificate SHA256SUMS.pem \
+            SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          # subject-checksums (rather than subject-path per file) lets one
+          # attestation cover every hash listed in SHA256SUMS in a single
+          # call.
+          subject-checksums: SHA256SUMS
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.version.outputs.tag }}"
+          ZIP="${{ steps.package_extension.outputs.zip_name }}"
+          TGZ="${{ steps.package_cli.outputs.tarball_name }}"
+
+          gh release create "$TAG" \
+            --title "PromptWarden $TAG" \
+            --notes "$(cat <<NOTES
+          Verify before installing — see [docs/RELEASING.md](https://github.com/${{ github.repository }}/blob/main/docs/RELEASING.md) for the exact \`cosign verify-blob\` command and how to check \`SHA256SUMS\`.
+
+          - \`$ZIP\` — extension runtime files only (manifest, built bundles, popup/options assets, icons, managed schema). For self-hosted CRX packing per [docs/DEPLOY_SELF_HOSTED_CRX.md](https://github.com/${{ github.repository }}/blob/main/docs/DEPLOY_SELF_HOSTED_CRX.md). **This is not the Chrome Web Store build** — the store re-signs with its own key and mints a different extension ID; see docs/RELEASING.md.
+          - \`$TGZ\` — the CLI. Install with \`npm install -g $TGZ\`, or run directly via \`npx $TGZ\`.
+          - \`SHA256SUMS\`, \`SHA256SUMS.sig\`, \`SHA256SUMS.pem\` — cosign keyless signature (Sigstore, no maintainer key) over the checksums file, plus a GitHub build provenance attestation covering both artifacts (\`gh attestation verify $ZIP -R ${{ github.repository }}\`).
+          NOTES
+          )" \
+            "$ZIP" "$TGZ" SHA256SUMS SHA256SUMS.sig SHA256SUMS.pem

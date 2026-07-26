@@ -34,8 +34,12 @@ bypass, managed-policy tampering, a way to defeat the no-egress guarantee).
   API keys) through a policy configured to block or redact it.
 - Managed-policy or storage handling that lets an unprivileged actor
   escalate, override, or forge policy.
-- Supply-chain issues in the release/signing process once releases are
-  signed.
+- Supply-chain issues in the release/signing process
+  (`.github/workflows/release.yml`, cosign keyless signing + build
+  provenance attestation — see `docs/RELEASING.md`) once the first signed
+  release has actually shipped from it. The pipeline exists; no tag has
+  been pushed through it yet, so there is nothing signed to attack in the
+  meantime.
 
 ## What is out of scope
 

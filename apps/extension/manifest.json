@@ -7,6 +7,7 @@
   "host_permissions": [],
   "optional_permissions": ["scripting"],
   "optional_host_permissions": ["https://*/*"],
+  "externally_connectable": { "ids": [] },
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -40,5 +41,6 @@
       "128": "icons/icon128.png"
     }
   },
-  "storage": { "managed_schema": "managed_schema.json" }
+  "storage": { "managed_schema": "managed_schema.json" },
+  "options_ui": { "page": "options.html", "open_in_tab": true }
 }

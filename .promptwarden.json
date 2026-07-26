@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "promptwarden-repo",
+  "hosts": [],
+  "logging": "event",
+  "defaultAction": "allow",
+  "retentionDays": 90,
+  "rules": [
+    { "detector": "private_key", "action": "block" },
+    { "detector": "connection_string", "action": "block" },
+    { "detector": "api_key", "action": "block" },
+    { "detector": "jwt", "action": "block" },
+    { "detector": "credit_card", "action": "observe" },
+    { "detector": "iban", "action": "observe" },
+    { "detector": "at_svnr", "action": "observe" },
+    { "detector": "email", "action": "allow" },
+    { "detector": "phone", "action": "allow" }
+  ]
+}

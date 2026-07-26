@@ -3,3 +3,4 @@ dist/
 *.bundle.js
 apps/extension/background.js
 .DS_Store
+.claude/settings.local.json

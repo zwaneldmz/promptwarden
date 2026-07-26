@@ -204,3 +204,35 @@ open (silently) that would otherwise be invisible from the transcript.
 Locally-recorded events (when `logging` is `"event"` or `"content"`) land at
 `${XDG_STATE_HOME:-~/.local/state}/promptwarden/events.jsonl`, one JSON line per non-clean
 outcome, tagged with `host: "claude-code:UserPromptSubmit"` or `"claude-code:PreToolUse"`.
+
+## Verified behavior
+
+Exercised against real `claude -p` sessions (Claude Code 2.1.215), policy loaded from
+`$PROMPTWARDEN_POLICY`:
+
+| Scenario | Result |
+|---|---|
+| `UserPromptSubmit`, prompt contains a Luhn-valid card, `credit_card: block` | Prompt rejected: `UserPromptSubmit operation blocked by hook: PromptWarden blocked this prompt (block: credit_card).` The model never saw it. |
+| `UserPromptSubmit`, clean prompt | Passes through untouched, no added latency visible to the user. |
+| `UserPromptSubmit`, `credit_card: redact` | Blocked, with the reason naming `PROMPTWARDEN_HOOK_ALLOW_WARN=1` as the downgrade — this event cannot rewrite a prompt. |
+| `PreToolUse`, model writes a card via `Write`, `credit_card: redact` | Allowed with `updatedInput`; the file on disk contained `[REDACTED:CARD]on file`. The card never reached the filesystem. |
+| `PreToolUse`, model writes an `sk-` key, `api_key: block` | Denied; no file created. |
+| `PreToolUse`, connection URI with credentials in a `Bash` command | Denied. |
+
+Two things that testing made obvious:
+
+- **Ordering.** `UserPromptSubmit` fires first, so a prompt that itself contains sensitive data
+  is rejected before any tool runs. Testing the `PreToolUse` path therefore requires input the
+  *model* produces, not input you type.
+- **Redaction eats an adjacent separator.** `[REDACTED:CARD]on file` lost the space after the
+  card, because the card detector's match includes a trailing separator. Cosmetic, but visible
+  in rewritten tool input.
+
+## Policy choice for a repo whose tests contain fixtures
+
+Blocking `credit_card`/`iban` in a repository whose own test suite holds checksum-valid
+fixtures makes that repository un-editable: a `PreToolUse` scan of an `Edit` touching
+`bench.test.ts` sees a real card and denies it. This repo's `.promptwarden.json` therefore sets
+those to `observe` (recorded, never interrupts) and keeps `block` for the categories that never
+legitimately appear in source — `private_key`, `connection_string`, `api_key`, `jwt`. Any repo
+with security fixtures needs the same split.

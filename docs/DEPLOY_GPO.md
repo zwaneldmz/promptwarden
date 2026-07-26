@@ -61,7 +61,7 @@ string field and an `extraHosts` array-of-strings field.
 
 ```
 HKLM\SOFTWARE\Policies\Google\Chrome\3rdparty\extensions\<PROMPTWARDEN_EXTENSION_ID>\policy
-  policy  (REG_SZ) = {"version":1,"name":"Default","hosts":["*"],"rules":[{"detector":"credit_card","action":"redact"},{"detector":"iban","action":"redact"},{"detector":"at_svnr","action":"block"}],"logging":"event","defaultAction":"warn","retentionDays":90}
+  policy  (REG_SZ) = {"version":1,"name":"Default","hosts":["chatgpt.com","chat.openai.com","claude.ai","gemini.google.com","copilot.microsoft.com","chat.mistral.ai","www.perplexity.ai"],"rules":[{"detector":"credit_card","action":"redact"},{"detector":"iban","action":"redact"},{"detector":"at_svnr","action":"block"}],"logging":"event","defaultAction":"warn","retentionDays":90}
 
 HKLM\SOFTWARE\Policies\Google\Chrome\3rdparty\extensions\<PROMPTWARDEN_EXTENSION_ID>\policy\extraHosts
   1  (REG_SZ) = https://internal-chat.example.com/*
@@ -73,6 +73,12 @@ For Edge, mirror the same two keys under
 
 Notes, same as the other two deploy docs:
 
+- **`hosts` must list explicit hostnames — never `["*"]`.** The example above lists the same 7
+  hosts as `apps/extension/manifest.json`'s `content_scripts[0].matches`. `hostMatches()`
+  (`packages/policy-engine/src/policy.ts`) matches an exact hostname or a leading `*.`
+  subdomain wildcard only; a bare `"*"` matches zero hosts, so it would enforce nothing while
+  the popup still shows the managed badge. `parsePolicy` rejects a bare `"*"` entry with a
+  readable error rather than accepting it.
 - **`policy`'s value must itself be valid JSON text.** The schema types it as `"string"`, and
   `apps/extension/src/background.ts::resolvePolicy` calls `JSON.parse(managed.policy)` on
   whatever's there. Unlike the Google Admin console's JSON editor (`DEPLOY_GOOGLE_ADMIN.md`),

@@ -251,8 +251,9 @@ document.addEventListener(
     const target = e.target as Element | null;
     // Exclude clicks inside the guardrail dialog itself: "Send anyway"
     // matches SEND_WORD, so without this the button would swallow its own
-    // click and re-open the dialog instead of resuming the send.
-    if (target?.closest?.(`#${UI_ID}`)) return;
+    // click and re-open the dialog instead of resuming the send. Identity
+    // check, not an id/selector lookup — see clickIsFromGuardrail() below.
+    if (clickIsFromGuardrail(e)) return;
     // Armed only while resuming a "Send anyway" by re-clicking the stored
     // button; let it pass through unexamined instead of re-intercepting it.
     if (bypassNextSubmit) return;
@@ -546,8 +547,6 @@ function replayDrop(target: HTMLElement, files: File[]) {
 
 /* ------------------------------ guardrail UI ----------------------------- */
 
-const UI_ID = "promptwarden-guardrail";
-
 interface GuardrailAction {
   label: string;
   primary?: boolean;
@@ -565,13 +564,65 @@ function categoriesOf(result: EvaluationResult): string {
   return [...new Set(result.findings.map((f) => f.detector))].join(", ");
 }
 
+/**
+ * The dialog's host element and its closed shadow root, created once on
+ * first display and reused for the page's lifetime. `guardrailHost` is the
+ * ONLY way this module ever locates its own dialog — never
+ * `document.getElementById` or a `#id`/class selector — because a fixed,
+ * guessable id is exactly what let a page find and control the old dialog:
+ *   - `host.id` is a per-load `crypto.randomUUID()`, not a constant, so a
+ *     page cannot target it by id in CSS (`#promptwarden-guardrail{display:
+ *     none!important}`) or in a `MutationObserver`/`querySelector` lookup —
+ *     even one hardcoded from old source or docs misses on every load;
+ *   - the shadow root's mode is "closed", so `guardrailHost.shadowRoot` is
+ *     null to page script and page-authored CSS selectors cannot match
+ *     anything inside it at all (open or closed — selectors never cross a
+ *     shadow boundary). Inline styles on each element still apply exactly
+ *     as before; a shadow root does not block a node's own `style` attribute.
+ * The host is left attached (empty) after a dialog closes rather than
+ * removed and recreated, so `guardrailHost` — and the identity check below
+ * that depends on it — stay valid for the whole page lifetime.
+ */
+let guardrailHost: HTMLDivElement | null = null;
+let guardrailShadow: ShadowRoot | null = null;
+
+function ensureGuardrailHost(): ShadowRoot {
+  if (guardrailHost && guardrailShadow) return guardrailShadow;
+  guardrailHost = document.createElement("div");
+  guardrailHost.id = crypto.randomUUID();
+  guardrailShadow = guardrailHost.attachShadow({ mode: "closed" });
+  document.documentElement.appendChild(guardrailHost);
+  return guardrailShadow;
+}
+
+/**
+ * Identity check for the click listener's self-exemption: does this click's
+ * path pass through our own dialog host? `composedPath()` is deliberately
+ * used instead of `event.target`: at a closed shadow boundary `target` is
+ * retargeted to the host for outside listeners, but `composedPath()` is
+ * unaffected by "closed" mode (it only gates the `.shadowRoot` property and
+ * `target` retargeting, not path introspection) and still lists the host.
+ * Since there is no id/selector involved, a page cannot forge a match by
+ * setting its own id or injecting a lookalike element.
+ */
+function clickIsFromGuardrail(e: Event): boolean {
+  if (!guardrailHost) return false;
+  if (typeof e.composedPath === "function") {
+    return e.composedPath().includes(guardrailHost);
+  }
+  // Defensive fallback for an engine without composedPath(): only catches a
+  // click on the host itself, not its shadow-internal descendants.
+  return e.target === guardrailHost;
+}
+
 function showGuardrail(opts: {
   title: string;
   detail: string;
   actions: GuardrailAction[];
   onDisplaced?: () => void;
 }) {
-  const existing = document.getElementById(UI_ID);
+  const shadow = ensureGuardrailHost();
+  const existing = shadow.firstElementChild;
   if (existing) {
     existing.remove();
     const displaced = onActiveDisplaced;
@@ -581,7 +632,6 @@ function showGuardrail(opts: {
   onActiveDisplaced = opts.onDisplaced ?? null;
 
   const box = document.createElement("div");
-  box.id = UI_ID;
   box.setAttribute("role", "alertdialog");
   box.setAttribute("aria-label", "PromptWarden");
   box.style.cssText =
@@ -612,7 +662,16 @@ function showGuardrail(opts: {
       (action.primary
         ? "#3f8cff;background:#1d4f9c;color:#fff"
         : "#2c3540;background:transparent;color:#e8edf2");
-    b.addEventListener("click", () => {
+    b.addEventListener("click", (e) => {
+      // Defense in depth, independent of the shadow boundary above: even if
+      // a page ever obtained a reference to this button (a future bug, a
+      // misconfiguration, a different browser's shadow-DOM quirk) and called
+      // .click() on it, that must not self-approve the exact bypass this
+      // dialog exists to gate. Reject anything not user-driven outright —
+      // don't run onPick, and don't remove the dialog either, so the
+      // approval stays pending. A real user click (isTrusted) behaves
+      // exactly as before.
+      if (!e.isTrusted) return;
       onActiveDisplaced = null;
       box.remove();
       action.onPick();
@@ -621,7 +680,7 @@ function showGuardrail(opts: {
   }
 
   box.append(title, detail, actions);
-  document.documentElement.appendChild(box);
+  shadow.appendChild(box);
 }
 
 /* ----------------------------- logging & telemetry ----------------------- */

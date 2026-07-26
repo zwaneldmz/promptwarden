@@ -22,6 +22,9 @@ export type DetectorId =
   | "phone"
   | "api_key"
   | "at_svnr" // Austrian social insurance number
+  | "private_key" // PEM-armored private key block (RSA/EC/DSA/OpenSSH/PKCS#8/PGP)
+  | "jwt" // three base64url segments with a decodable {"alg":…} header
+  | "connection_string" // DB/queue URI or ODBC key=value form, credentials present
   | "bulk_pii"; // synthetic post-pass, see engine.ts evaluate()
 
 export interface DetectorRule {
@@ -106,6 +109,13 @@ export function parsePolicy(input: unknown): Policy {
   }
   if (!Array.isArray(p.hosts) || p.hosts.some((h) => typeof h !== "string")) {
     throw new Error("Policy hosts must be an array of strings");
+  }
+  if ((p.hosts as string[]).some((h) => h.trim() === "*")) {
+    throw new Error(
+      'Policy hosts must not contain a bare "*" — hostMatches() has no all-hosts branch, so ' +
+        '"*" matches zero hosts and silently disables enforcement everywhere. List explicit ' +
+        'hosts (e.g. "claude.ai") or a subdomain wildcard (e.g. "*.example.com") instead.',
+    );
   }
   if (!ACTIONS.includes(p.defaultAction as Action)) {
     throw new Error("defaultAction must be one of " + ACTIONS.join(", "));

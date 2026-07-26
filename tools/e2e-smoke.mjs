@@ -7,10 +7,36 @@
  *   2. click-to-send (focusin-tracked fallback, since focus moves to the
  *      send button before a plain activeEditable() check would catch it)
  *   3. paste         (paste path)
+ *   4. click-to-send with document.body.id set to the guardrail's OLD fixed
+ *      id ("promptwarden-guardrail") beforehand — regression for
+ *      ROADMAP.md §1.2 item 4: the click listener's self-exemption used to
+ *      be `target.closest("#" + UI_ID)`, and closest() walks up through
+ *      ancestors including <body>, so a page setting *body's* id to that
+ *      string made the exemption match every click on the page, silently
+ *      disabling the whole click-to-send path. See content.ts.
  *
  * Not covered: the <form> submit path (no supported host uses a plain form
  * submit; verified manually) and the bypass-expiry timer (needs a real
  * send; verified manually).
+ *
+ * How interception is asserted, and why:
+ * The dialog renders inside a *closed* ShadowRoot, so nothing outside the
+ * extension's own module can query into it — including Playwright, whose
+ * locator engine traverses shadow trees via the `element.shadowRoot`
+ * getter, which reads null for a closed root. This file does not try to
+ * reach inside; weakening the boundary to make the test easier would
+ * defeat the fix it guards.
+ *
+ * What it checks instead is the shadow *host*: a <div> with a
+ * crypto.randomUUID() id appended to <html> only when a dialog is shown.
+ * The host lives in the light DOM and is therefore observable — a page can
+ * see that it exists; what it cannot do is target it by a stable id or
+ * reach inside it. Its presence is a direct positive signal that the
+ * guardrail fired, and it works for every path (a blocked paste inserts
+ * nothing, so text-based heuristics read backwards there).
+ *
+ * Each check runs on a freshly reloaded page, since the dialog cannot be
+ * dismissed by locating a button inside it.
  *
  * Usage:
  *   node tools/e2e-smoke.mjs
@@ -53,7 +79,9 @@ const SITES = ALL ? MANIFEST_HOSTS : ["https://chatgpt.com/"];
 
 const IBAN_TEXT = "please pay invoice 118 to AT61 1904 3002 3457 3201 thanks";
 const CARD_TEXT = "customer card on file: 4532 0151 1283 0366";
-const GUARDRAIL = "#promptwarden-guardrail";
+const SEND_BUTTON_SELECTOR =
+  'button[data-testid*="send" i], button[aria-label*="end" i], button[type="submit"]';
+const RELOAD_SETTLE_MS = 3500;
 
 async function editor(page) {
   for (const s of ["#prompt-textarea", "textarea", '[contenteditable="true"]']) {
@@ -66,47 +94,111 @@ async function editor(page) {
   throw new Error("no editor found (login/bot wall?)");
 }
 
-async function expectGuardrail(page, label) {
-  await page.locator(GUARDRAIL).waitFor({ state: "visible", timeout: 4000 });
-  const text = await page.locator(GUARDRAIL).innerText();
-  console.log(`  PASS ${label}: ${text.split("\n")[0]} | ${text.split("\n")[1] ?? ""}`);
-  await page.locator(`${GUARDRAIL} button`, { hasText: /Cancel|Close/ }).click();
-  await page.locator(GUARDRAIL).waitFor({ state: "hidden", timeout: 2000 });
+/**
+ * True once the guardrail's shadow host is in the page — see the file
+ * header. Identified by shape (a direct <html> child whose id is a UUID and
+ * whose own shadowRoot reads null, i.e. closed), never by a fixed id.
+ */
+async function guardrailShowing(page) {
+  return page.evaluate(() => {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return [...document.documentElement.children].some(
+      (el) => el.tagName === "DIV" && uuid.test(el.id) && el.shadowRoot === null,
+    );
+  });
 }
 
-async function clearEditor(page, ed) {
-  await ed.click();
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+a" : "Control+a");
-  await page.keyboard.press("Backspace");
+/** Wait for the guardrail to appear, or fail with what the editable held. */
+async function expectIntercepted(page, ed) {
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline) {
+    if (await guardrailShowing(page)) return;
+    await page.waitForTimeout(100);
+  }
+  throw new Error("guardrail did not intercept — no dialog host appeared");
 }
 
-async function runChecks(ctx, page) {
+/**
+ * Click the site's send button. Waits for it to become enabled first: these
+ * editors are React-backed and the button stays disabled until the typed
+ * text lands in component state, so an immediate click is a flaky no-op.
+ */
+async function clickSend(page) {
+  const btn = page.locator(SEND_BUTTON_SELECTOR).first();
+  await btn.waitFor({ state: "visible", timeout: 5000 });
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && !(await btn.isEnabled())) {
+    await page.waitForTimeout(100);
+  }
+  await btn.click();
+}
+
+async function reload(page) {
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(RELOAD_SETTLE_MS);
+}
+
+async function checkEnterSubmit(ctx, page) {
   const ed = await editor(page);
-
-  // 1. Enter path
   await ed.click();
   await page.keyboard.type(IBAN_TEXT, { delay: 10 });
   await page.keyboard.press("Enter");
-  await expectGuardrail(page, "enter-submit (iban)");
+  await expectIntercepted(page, ed);
+}
 
-  // 2. Click-to-send path — focus moves to the button before our listener runs
-  await clearEditor(page, ed);
+async function checkClickToSend(ctx, page) {
+  const ed = await editor(page);
+  await ed.click();
   await page.keyboard.type(CARD_TEXT, { delay: 10 });
-  const send = page
-    .locator('button[data-testid*="send" i], button[aria-label*="end" i], button[type="submit"]')
-    .first();
-  await send.click();
-  await expectGuardrail(page, "click-to-send (credit_card)");
+  await clickSend(page);
+  await expectIntercepted(page, ed);
+}
 
-  // 3. Paste path
-  await clearEditor(page, ed);
+async function checkPaste(ctx, page) {
+  const ed = await editor(page);
   await ctx.grantPermissions(["clipboard-read", "clipboard-write"], {
     origin: new URL(page.url()).origin,
   });
   await page.evaluate((t) => navigator.clipboard.writeText(t), IBAN_TEXT);
   await ed.click();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+v" : "Control+v");
-  await expectGuardrail(page, "paste (iban)");
+  await expectIntercepted(page, ed);
+}
+
+/** Regression for ROADMAP.md §1.2 item 4 — see file header. */
+async function checkBodyIdClobber(ctx, page) {
+  await page.evaluate(() => {
+    document.body.id = "promptwarden-guardrail";
+  });
+  const ed = await editor(page);
+  await ed.click();
+  await page.keyboard.type(CARD_TEXT, { delay: 10 });
+  await clickSend(page);
+  await expectIntercepted(page, ed);
+}
+
+const CHECKS = [
+  { label: "enter-submit (iban)", run: checkEnterSubmit },
+  { label: "click-to-send (credit_card)", run: checkClickToSend },
+  { label: "paste (iban)", run: checkPaste },
+  { label: "click-to-send after document.body.id clobber (credit_card)", run: checkBodyIdClobber },
+];
+
+async function runChecks(ctx, page) {
+  for (const check of CHECKS) {
+    try {
+      await check.run(ctx, page);
+    } catch (e) {
+      e.message = `${check.label}: ${e.message}`;
+      throw e;
+    }
+    console.log(`  PASS ${check.label}`);
+    // Fresh page for the next check rather than dismissing the current
+    // dialog: see file header for why this suite can't locate a button
+    // inside it. This also re-injects the content script, so it exercises
+    // the real cold-load path each time rather than reusing warmed-up state.
+    await reload(page);
+  }
 }
 
 async function smokeHost(site) {
@@ -121,7 +213,7 @@ async function smokeHost(site) {
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     console.log(`\n== ${site} ==`);
     await page.goto(site, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(3500);
+    await page.waitForTimeout(RELOAD_SETTLE_MS);
     await runChecks(ctx, page);
     return { host: site, status: "PASS", detail: "" };
   } catch (e) {

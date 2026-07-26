@@ -112,6 +112,27 @@ desktop applications is not a website — it doesn't run in a browser tab, so
 different surface from `copilot.microsoft.com` (the one PromptWarden's manifest does cover),
 which is a browser-based chat site.
 
+**Installing this extension — or, later, a prompt hook — does not make "no sensitive data
+leaves this machine" a true statement about that machine.** Each mechanism this project ships
+or plans covers one surface, never every path data can leave by. Concretely, none of the
+following is caught by the browser extension, and none would be caught by the CLI/hook
+mechanisms scoped in [`docs/ROADMAP.md`](ROADMAP.md) §2 "Coverage map" either:
+
+- **Files an agent reads on its own** — `Read`/`Grep` results, `CLAUDE.md`, auto-loaded
+  context, skills. A `PreToolUse` hook sees the tool's declared arguments (e.g. a file path),
+  never the bytes the tool returns, and `PostToolUse` cannot block. No hook reaches this data.
+- **Direct API calls** — `curl`, a Python/Node SDK, a backend integration calling an AI
+  provider's API directly never touches a browser tab or a CLI harness hook; see "Direct API
+  access" above, which already states this for the browser case.
+- **IDE inline completions** (GitHub Copilot, Cursor Tab, JetBrains AI, etc.) — the completion
+  payload is assembled inside a closed vendor process and sent over that process's own
+  connection; architecturally out of reach for a local, hook- or extension-based tool.
+
+State coverage as "the 7 browser hosts in `manifest.json`" (and, once the CLI/hook adapters in
+`ROADMAP.md` ship, the specific surfaces each one covers) — never as a blanket "no sensitive
+data leaves this machine," which is false for every mechanism named in this document or
+planned in `ROADMAP.md` §2.
+
 ## Enforcement boundary: isolated world vs. shared DOM
 
 MV3 content scripts execute in an **isolated JavaScript world**: a separate global scope from
@@ -134,6 +155,20 @@ isolated worlds relate to the DOM, not a bug in this codebase: "held" in the fil
 dialog copy means held from the page's *submission* path, not hidden from a page script that
 goes looking.
 
+## Aggregate export is not, on its own, k-anonymous
+
+The popup's "Export aggregate" button produces day-bucketed counts keyed by host, category,
+and action for **this one device** (`buildAggregate()` in `apps/extension/popup.js`). It
+applies no minimum-cell-size (`k`) suppression, so a cell can be — and typically is — `1`:
+`{"2026-07-14":{"claude.ai":{"credit_card":{"block":1}}}}` names an exact host, day, category,
+and action for a single event on this device. That is a per-event disclosure, not an
+anonymized statistic, regardless of the "k-anonymous" language that has appeared elsewhere in
+this project's docs. K-anonymity is a property of a *merged, suppressed* dataset: it only
+starts to hold once an aggregator merges multiple devices' exports and suppresses or buckets
+any resulting cell below the chosen `k`, a step PromptWarden does not perform itself. See
+`docs/HOST_COVERAGE.md` "Reporting requirement" for the coverage caveat that applies to the
+same export.
+
 ## Where these claims come from
 
 | Claim | File |
@@ -146,3 +181,4 @@ goes looking.
 | Non-matched hosts / `extraHosts` status | `docs/HOST_COVERAGE.md` |
 | Managed vs. local policy precedence | `apps/extension/src/background.ts::resolvePolicy` |
 | `bypassNextSubmit` arm/disarm | `apps/extension/src/content.ts` (`armBypassNextSubmit`, `disarmBypassNextSubmit`, the `isTrusted`-gated `input` listener) |
+| Aggregate export is per-device day-bucketed counts, not k-anonymous alone | `apps/extension/popup.js::buildAggregate` |

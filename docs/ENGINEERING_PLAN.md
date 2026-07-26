@@ -32,7 +32,7 @@ browser for AI chat sites. Everything runs locally; nothing ever leaves the devi
   text extraction. Pure, DOM-free, dependency-free.
 - `apps/extension` — MV3 extension: capture-phase interception with zero site-specific
   selectors, guardrail dialogs, managed-storage policy support, dynamic host coverage
-  (`docs/HOST_COVERAGE.md`), popup with event log and k-anonymity-friendly aggregate export.
+  (`docs/HOST_COVERAGE.md`), popup with event log and day-bucketed aggregate export.
 - `profiles/` — example policy documents.
 - `tools/e2e-smoke.mjs` — live-browser regression against real AI sites.
 

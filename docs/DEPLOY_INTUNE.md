@@ -80,7 +80,7 @@ $ids = @{
   "Microsoft\Edge" = "<PROMPTWARDEN_EDGE_EXTENSION_ID>"
 }
 
-$policyJson = '{"version":1,"name":"Default","hosts":["*"],"rules":[{"detector":"credit_card","action":"redact"},{"detector":"iban","action":"redact"},{"detector":"at_svnr","action":"block"}],"logging":"event","defaultAction":"warn","retentionDays":90}'
+$policyJson = '{"version":1,"name":"Default","hosts":["chatgpt.com","chat.openai.com","claude.ai","gemini.google.com","copilot.microsoft.com","chat.mistral.ai","www.perplexity.ai"],"rules":[{"detector":"credit_card","action":"redact"},{"detector":"iban","action":"redact"},{"detector":"at_svnr","action":"block"}],"logging":"event","defaultAction":"warn","retentionDays":90}'
 $extraHosts = @("https://internal-chat.example.com/*", "https://llm.example.org/*")
 
 foreach ($browser in $ids.Keys) {
@@ -105,6 +105,12 @@ subkey with numbered `REG_SZ` values, one per array entry (Chrome/Edge's registr
 representation of a schema `array` field). Re-run the script (or let Intune's periodic
 re-application do it) whenever the policy content changes — it's idempotent, not
 incremental.
+
+**`hosts` must list explicit hostnames — never `["*"]`.** `$policyJson` above lists the same 7
+hosts as `apps/extension/manifest.json`'s `content_scripts[0].matches`. A bare `"*"` matches
+**zero** hosts under `hostMatches()` (`packages/policy-engine/src/policy.ts`), so it would
+enforce nothing while the popup still shows the managed badge; `parsePolicy` rejects a bare
+`"*"` entry with a readable error rather than accepting it silently.
 
 **`extraHosts` caveat:** same as `DEPLOY_GOOGLE_ADMIN.md` — declaring it here starts scanning
 only once the matching optional host permission is also granted (via

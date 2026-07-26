@@ -49,8 +49,10 @@
   }
 
   /**
-   * Build the k-anonymous aggregate export: day-bucketed counts keyed by
+   * Build the aggregate export: day-bucketed counts from this device keyed by
    * host, category, and action, plus the extension version and policy name.
+   * Not k-anonymous on its own — cells can be 1. Suppressing small cells
+   * requires merging several devices' exports out of band.
    * Built exclusively off `safeFields()` — the same allowlist the popup's
    * own rendering uses — so this can never surface a per-event row, a
    * finer-than-day timestamp, a device identifier, or a content field, even
@@ -96,26 +98,37 @@
     URL.revokeObjectURL(url);
   }
 
+  // Resolution (managed > local > built-in default, with a malformed managed
+  // policy failing to the built-in default rather than to the user-writable
+  // local one) lives in background.ts's resolvePolicy — asked here over
+  // chrome.runtime.sendMessage rather than duplicated, so the popup can never
+  // show a healthier picture than what background.ts actually resolved and
+  // acted on (e.g. the badge). A malformed managed policy comes back with
+  // `errored: true` and `source: "built-in"` — never null, never a silent
+  // "Managed" badge over an empty policy.
   async function loadPolicyInfo() {
-    let managed = false;
-    let policy = null;
     try {
-      const m = await chrome.storage.managed.get(["policy"]);
-      if (typeof m.policy === "string" && m.policy) {
-        managed = true;
-        try { policy = JSON.parse(m.policy); } catch { /* malformed managed policy */ }
-      }
-    } catch { /* managed storage unavailable outside enterprise deployments */ }
-    if (!policy) {
-      const local = await chrome.storage.local.get(["policy"]);
-      if (local.policy) policy = local.policy;
+      const resp = await chrome.runtime.sendMessage({ type: "get-policy" });
+      return {
+        policy: resp && typeof resp === "object" && resp.policy ? resp.policy : null,
+        source: resp && typeof resp.source === "string" ? resp.source : "built-in",
+        errored: !!(resp && resp.errored),
+      };
+    } catch {
+      // Background service worker unreachable — never silently render a
+      // healthy state over an unknown one.
+      return { policy: null, source: "built-in", errored: true };
     }
-    return { managed, policy };
   }
 
   async function loadEvents() {
     const local = await chrome.storage.local.get(["pw-events"]);
     return Array.isArray(local["pw-events"]) ? local["pw-events"] : [];
+  }
+
+  async function loadDiagnostics() {
+    const local = await chrome.storage.local.get(["pw-diagnostics"]);
+    return Array.isArray(local["pw-diagnostics"]) ? local["pw-diagnostics"] : [];
   }
 
   // Mirrors apps/extension/src/background.ts's isValidHttpsMatchPattern.
@@ -190,15 +203,18 @@
 
   /**
    * Build the prefilled GitHub issue URL for "Problem melden". Query params
-   * carry ONLY the extension version, the browser UA, and a category-level
-   * diagnostics summary (counts per pw-diagnostics `kind`) — never event
+   * carry ONLY the extension version and a category-level diagnostics
+   * summary (counts per pw-diagnostics `kind`) — never `navigator.userAgent`
+   * (it identifies the reporter, not the bug, in a body posted to a PUBLIC
+   * issue tracker whose realistic user action is "Submit"), never event
    * data, never hostnames from pw-events or pw-diagnostics. The user still
    * has to review and click "Submit new issue" on GitHub themselves; this
-   * only opens the compose form pre-filled.
+   * only opens the compose form pre-filled. Called lazily from the link's
+   * click handler, not on every popup render, so opening the popup never
+   * touches `pw-diagnostics` on its own.
    */
   async function buildReportUrl() {
-    const local = await chrome.storage.local.get(["pw-diagnostics"]);
-    const diagnostics = Array.isArray(local["pw-diagnostics"]) ? local["pw-diagnostics"] : [];
+    const diagnostics = await loadDiagnostics();
     const counts = summarizeDiagnostics(diagnostics);
     const version = chrome.runtime.getManifest().version;
     const summaryLines = Object.entries(counts)
@@ -206,7 +222,6 @@
       .map(([kind, n]) => `- ${kind}: ${n}`);
     const body = [
       `Extension version: ${version}`,
-      `Browser: ${navigator.userAgent}`,
       "",
       "Diagnostics summary (category counts only, no event data, no hostnames):",
       summaryLines.length > 0 ? summaryLines.join("\n") : "(none recorded)",
@@ -215,14 +230,22 @@
     return `${ISSUE_REPO_URL}/issues/new?${params.toString()}`;
   }
 
-  function renderPolicy({ managed, policy }) {
+  // `source` — not the mere presence of a managed-storage string — decides
+  // the badge. A managed policy that failed to parse resolves (in
+  // background.ts) to `source: "built-in"` and `errored: true`, so this can
+  // never again render "Managed by your organization" over an unrelated
+  // fallback policy the old presence-only `managed` boolean produced.
+  function renderPolicy({ policy, source, errored }) {
     document.getElementById("policy-name").textContent = policy?.name ?? "standalone-default";
     document.getElementById("rule-count").textContent = Array.isArray(policy?.rules) ? policy.rules.length : 0;
     document.getElementById("host-count").textContent = Array.isArray(policy?.hosts) ? policy.hosts.length : 0;
     const badge = document.getElementById("mode");
-    if (managed) {
+    badge.classList.remove("unmanaged", "errored");
+    if (errored) {
+      badge.textContent = "Policy error — contact IT";
+      badge.classList.add("errored");
+    } else if (source === "managed") {
       badge.textContent = "Managed by your organization";
-      badge.classList.remove("unmanaged");
     } else {
       badge.textContent = "Standalone";
       badge.classList.add("unmanaged");
@@ -271,11 +294,71 @@
     }
   }
 
+  // Per-kind occurrence counts, rendered as plain text nodes — never
+  // innerHTML — so a diagnostic `kind` can never be interpreted as markup
+  // even though the set is closed-by-construction on both writers
+  // (background.ts's BackgroundDiagnosticKind, content.ts's DiagnosticKind).
+  function renderDiagnosticCounts(diagnostics) {
+    const list = document.getElementById("diag-counts");
+    list.innerHTML = "";
+    const counts = summarizeDiagnostics(diagnostics);
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (entries.length === 0) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "No diagnostics recorded.";
+      list.appendChild(li);
+      return;
+    }
+    for (const [kind, n] of entries) {
+      const li = document.createElement("li");
+      const label = document.createElement("span");
+      label.textContent = kind;
+      const count = document.createElement("span");
+      count.className = "val";
+      count.textContent = String(n);
+      li.append(label, count);
+      list.appendChild(li);
+    }
+  }
+
+  /** Health block: extension version, policy name, resolved source, and
+   * per-kind diagnostic counts — enough for a helpdesk call without opening
+   * DevTools. */
+  function renderDiagnosticsBlock(policyInfo, diagnostics) {
+    document.getElementById("diag-version").textContent = chrome.runtime.getManifest().version;
+    document.getElementById("diag-policy-name").textContent = policyInfo.policy?.name ?? "standalone-default";
+    document.getElementById("diag-source").textContent = policyInfo.source;
+    renderDiagnosticCounts(diagnostics);
+  }
+
+  /**
+   * Self-contained JSON export for helpdesk: extension version, policy name,
+   * resolved source (managed/local/built-in), errored state, and per-kind
+   * diagnostic counts. No GitHub, no `navigator.userAgent` — this is handed
+   * over by ticket, not posted to a public tracker.
+   */
+  function buildDiagnosticsExport(policyInfo, diagnostics) {
+    return {
+      extensionVersion: chrome.runtime.getManifest().version,
+      policyName: policyInfo.policy?.name ?? "standalone-default",
+      policySource: policyInfo.source,
+      policyErrored: policyInfo.errored,
+      generatedAt: new Date().toISOString(),
+      diagnosticCounts: summarizeDiagnostics(diagnostics),
+    };
+  }
+
   async function refresh() {
-    const [policyInfo, events] = await Promise.all([loadPolicyInfo(), loadEvents()]);
+    const [policyInfo, events, diagnostics] = await Promise.all([
+      loadPolicyInfo(),
+      loadEvents(),
+      loadDiagnostics(),
+    ]);
     renderPolicy(policyInfo);
     renderCounts(events);
     renderList(events, (policyInfo.policy?.logging ?? "off") === "off");
+    renderDiagnosticsBlock(policyInfo, diagnostics);
     // The export button only appears once there is something to export —
     // an empty aggregate isn't worth a download and hides accidentally
     // exporting one-line-of-context-free "nothing" as if it meant something.
@@ -283,7 +366,9 @@
   }
 
   document.getElementById("clear-events").addEventListener("click", async () => {
-    await chrome.storage.local.set({ "pw-events": [] });
+    // Clears pw-diagnostics too — it's a second persistence path with no
+    // other way for the user to clear it.
+    await chrome.storage.local.set({ "pw-events": [], "pw-diagnostics": [] });
     await refresh();
   });
 
@@ -291,6 +376,12 @@
     const [policyInfo, events] = await Promise.all([loadPolicyInfo(), loadEvents()]);
     const aggregate = buildAggregate(events, policyInfo.policy);
     downloadJson(`pw-aggregate-${aggregate.generatedDay}.json`, aggregate);
+  });
+
+  document.getElementById("export-diagnostics").addEventListener("click", async () => {
+    const [policyInfo, diagnostics] = await Promise.all([loadPolicyInfo(), loadDiagnostics()]);
+    const report = buildDiagnosticsExport(policyInfo, diagnostics);
+    downloadJson(`pw-diagnostics-${report.generatedAt.slice(0, 10)}.json`, report);
   });
 
   document.getElementById("enable-extra-hosts").addEventListener("click", async () => {
@@ -317,7 +408,15 @@
     await refreshExtraHostsNotice();
   });
 
+  // Built lazily here, on the user's click, rather than eagerly on every
+  // popup open — buildReportUrl() only needs to run once anyone is actually
+  // about to file a report. href stays "#" (see popup.html) until then.
+  document.getElementById("report-problem").addEventListener("click", (e) => {
+    e.preventDefault();
+    buildReportUrl().then((url) => {
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
+  });
+
   await Promise.all([refresh(), refreshExtraHostsNotice()]);
-  const reportLink = document.getElementById("report-problem");
-  reportLink.href = await buildReportUrl();
 })();

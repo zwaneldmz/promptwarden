@@ -128,6 +128,23 @@ test("invalid policies are rejected with readable errors", () => {
   );
 });
 
+test('a bare "*" host entry is rejected instead of silently matching nothing', () => {
+  const base = {
+    version: 1,
+    name: "x",
+    defaultAction: "warn",
+    logging: "event",
+    rules: [],
+  };
+  assert.throws(() => parsePolicy({ ...base, hosts: ["*"] }), /bare "\*"/);
+  // Mixed in with real hosts, still rejected — not just a special-case for the sole entry.
+  assert.throws(() => parsePolicy({ ...base, hosts: ["claude.ai", "*"] }), /bare "\*"/);
+  // Whitespace-padded bare wildcard is caught too.
+  assert.throws(() => parsePolicy({ ...base, hosts: [" * "] }), /bare "\*"/);
+  // A subdomain wildcard is a different, still-supported shape and must not be rejected.
+  assert.equal(parsePolicy({ ...base, hosts: ["*.example.com"] }).hosts[0], "*.example.com");
+});
+
 test("zero-width custom pattern cannot hang the engine", () => {
   const p = parsePolicy({
     version: 1,

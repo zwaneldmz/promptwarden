@@ -72,8 +72,10 @@ individual user) making an explicit, revocable grant — never a store re-submis
   re-sync immediately rather than waiting for the `onAdded` listener. The popup also has a
   **"Problem melden"** link that opens a prefilled GitHub issue against
   `zwaneldmz/promptwarden` carrying only the
-  extension version, the browser UA, and a category-level count summary from `pw-diagnostics`
-  — never event data, never a hostname from `pw-events` or `pw-diagnostics`.
+  extension version and a category-level count summary from `pw-diagnostics` — never
+  `navigator.userAgent` (dropped: it identifies the reporter, not the bug, on a public
+  tracker), never event data, never a hostname from `pw-events` or `pw-diagnostics`. The URL
+  is built lazily when the link is clicked, not on every popup open.
 
 ## How an admin extends coverage (2 steps, no store re-review)
 
@@ -238,6 +240,15 @@ time as `extraHosts` grants land, so numbers from before and after a grant aren'
 A host that's declared and granted but not yet mirrored into `policy.hosts` (see "The other
 half" above) contributes zero measured exposure even though the content script is running
 there.
+
+**The popup's aggregate export ("Export aggregate") is day-bucketed aggregate counts from one
+device, not a k-anonymous dataset on its own.** `buildAggregate()` (`apps/extension/popup.js`)
+applies no minimum-cell-size suppression, so a single device's export can and does contain
+cells of size 1 (e.g. one `credit_card` block on one host on one day) — that is a per-event
+disclosure for that device, not an anonymized statistic. K-anonymity, if you need it for a
+report leaving this device, requires merging multiple devices' exports and suppressing or
+bucketing any resulting cell below your chosen k **before** sharing further; PromptWarden does
+not do that merge or suppression itself.
 
 ## Status summary
 

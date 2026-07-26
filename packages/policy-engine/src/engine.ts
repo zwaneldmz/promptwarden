@@ -105,7 +105,20 @@ export function evaluate(text: string, policy: Policy): EvaluationResult {
       }
     } else if (bulkAction !== "allow") {
       const bulkLabel = bulkRule?.label ?? DEFAULT_LABELS.bulk_pii;
-      kept.push({ detector: "bulk_pii", start: 0, end: text.length, match: text, action: bulkAction, label: bulkLabel });
+      // Deliberately NOT `match: text` — this finding's span covers the whole
+      // evaluated text (see comment above), and `toLogRecord` copies `match`
+      // verbatim under logging:"content". A synthetic, count-style token
+      // keeps the finding shape intact (start/end still describe "the whole
+      // text was implicated") without ever putting the whole prompt — or a
+      // whole extracted spreadsheet, via scanFiles — into a persisted record.
+      kept.push({
+        detector: "bulk_pii",
+        start: 0,
+        end: text.length,
+        match: `${distinctBulkMatches.size} distinct matches`,
+        action: bulkAction,
+        label: bulkLabel,
+      });
     }
   }
 
@@ -121,6 +134,23 @@ export function evaluate(text: string, policy: Policy): EvaluationResult {
   const needsWarning = !blocked && kept.some((f) => f.action === "warn");
 
   return { findings: kept, redactedText, blocked, needsWarning };
+}
+
+/**
+ * Hard cap on the length of any `match` string that reaches a persisted
+ * record, regardless of which detector produced it or how long the
+ * underlying span was. This is a backstop, not the primary defense — the
+ * primary defense is that individual detectors match bounded-length tokens
+ * (an IBAN, a card number, …) and the bulk_pii post-pass no longer carries
+ * the whole text (see `evaluate`) — but nothing here should ever have to
+ * trust that upstream invariant to hold forever.
+ */
+const MAX_LOGGED_MATCH_CHARS = 64;
+
+/** Truncate `match` to the persisted cap, leaving an explicit marker when cut. */
+function truncateMatch(match: string): string {
+  if (match.length <= MAX_LOGGED_MATCH_CHARS) return match;
+  return match.slice(0, MAX_LOGGED_MATCH_CHARS) + "…";
 }
 
 /**
@@ -142,5 +172,36 @@ export function toLogRecord(
     actions: [...new Set(result.findings.map((f) => f.action))],
   };
   if (policy.logging === "event") return base;
-  return { ...base, matches: result.findings.map((f) => ({ detector: f.detector, match: f.match })) };
+  return {
+    ...base,
+    matches: result.findings.map((f) => ({ detector: f.detector, match: truncateMatch(f.match) })),
+  };
+}
+
+/**
+ * Second privacy gate: a summary safe to hand to something that isn't the
+ * extension's own local storage — a CLI exit message, a hook's block reason
+ * fed back into a model's context, anything that might echo the string
+ * onward. Unlike `toLogRecord`, this is NOT governed by `policy.logging`:
+ * even under logging:"content" it must never contain a matched value, only
+ * which detector categories fired and what action each one took. A block
+ * message that quoted the IBAN it just blocked would leak exactly what the
+ * block was meant to prevent.
+ */
+export function toUserMessage(result: EvaluationResult): string {
+  if (result.findings.length === 0) return "No policy findings.";
+  const byAction = new Map<Action, Set<string>>();
+  for (const f of result.findings) {
+    if (!byAction.has(f.action)) byAction.set(f.action, new Set());
+    byAction.get(f.action)!.add(f.detector);
+  }
+  const order: Action[] = ["block", "redact", "warn", "observe", "allow"];
+  const parts: string[] = [];
+  for (const action of order) {
+    const categories = byAction.get(action);
+    if (categories && categories.size > 0) {
+      parts.push(`${action}: ${[...categories].sort().join(", ")}`);
+    }
+  }
+  return parts.join("; ");
 }

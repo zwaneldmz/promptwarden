@@ -3,7 +3,7 @@
   "properties": {
     "policy": {
       "title": "PromptWarden policy document (JSON string)",
-      "description": "A serialized PromptWarden policy. Distributed by the organization via Chrome Enterprise policy / Google Admin console. Takes precedence over any locally configured policy.",
+      "description": "A serialized PromptWarden policy. Distributed by the organization via Chrome Enterprise policy / Google Admin console. Takes precedence over any locally configured policy. WARNING: Chrome validates only that this value is a string — it never parses or validates the JSON contents against this schema. A malformed or invalid policy document will pass chrome://policy with no error badge; the extension detects it at load time instead, falls back to its built-in default policy, and surfaces an errored state in its popup and toolbar badge.",
       "type": "string"
     },
     "extraHosts": {

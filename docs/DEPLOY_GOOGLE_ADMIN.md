@@ -51,10 +51,20 @@ reaches the extension. There are exactly two top-level fields:
 
 ```json
 {
-  "policy": "{\"version\":1,\"name\":\"Default\",\"hosts\":[\"*\"],\"rules\":[{\"detector\":\"credit_card\",\"action\":\"redact\"},{\"detector\":\"iban\",\"action\":\"redact\"},{\"detector\":\"at_svnr\",\"action\":\"block\"}],\"logging\":\"event\",\"defaultAction\":\"warn\",\"retentionDays\":90}",
+  "policy": "{\"version\":1,\"name\":\"Default\",\"hosts\":[\"chatgpt.com\",\"chat.openai.com\",\"claude.ai\",\"gemini.google.com\",\"copilot.microsoft.com\",\"chat.mistral.ai\",\"www.perplexity.ai\"],\"rules\":[{\"detector\":\"credit_card\",\"action\":\"redact\"},{\"detector\":\"iban\",\"action\":\"redact\"},{\"detector\":\"at_svnr\",\"action\":\"block\"}],\"logging\":\"event\",\"defaultAction\":\"warn\",\"retentionDays\":90}",
   "extraHosts": ["https://internal-chat.example.com/*", "https://llm.example.org/*"]
 }
 ```
+
+**`hosts` must list explicit hostnames — never `["*"]`.** The example above lists the same 7
+hosts as `apps/extension/manifest.json`'s `content_scripts[0].matches`. `hostMatches()`
+(`packages/policy-engine/src/policy.ts`) only understands an exact hostname or a leading
+`*.` subdomain wildcard (e.g. `"*.example.com"`); a bare `"*"` matches **zero** hosts, so a
+policy that pastes `"hosts":["*"]` enforces nothing anywhere while the popup still shows
+"Managed by your organization" — `parsePolicy` now rejects a bare `"*"` entry outright (a
+readable error, not a silent no-op) so this can't ship by accident. If you add a host beyond
+the default 7 via `extraHosts` (see the caveat below), add it to `hosts` here too, using its
+exact hostname or a `*.` wildcard.
 
 **Why `policy` is a string inside a string, not a nested object:** `managed_schema.json`
 declares `policy`'s type as `"string"`, not `"object"`. The extension reads it with

@@ -43,6 +43,40 @@ product makes to customers about privacy:
    surface is deliberately tiny because it runs in every employee's browser.
 5. **TypeScript for all extension and engine code.** No plain JS additions.
 
+## Test fixtures for a DLP tool
+
+This project's test corpus is inherently made of credential-shaped strings —
+that's the point, we're testing a detector for them. That collides with
+GitHub's scanners, which can't tell a fixture from a leak:
+
+- **Push protection** blocks the push outright when a commit contains a
+  string shaped like a live API key (Stripe `sk_live_...`, etc.).
+- **Secret scanning** fires a post-push alert for connection strings and
+  similar shapes it doesn't push-protect on, indistinguishable in the alert
+  inbox from a real leaked credential.
+
+A blocked push is a bad day; a false alert is worse, because it trains
+whoever triages alerts to expect noise and skim past the next one.
+
+**The rule:** a test fixture that is shaped like an API key, token,
+connection string, or private key must be **assembled at runtime from
+parts** — never written as a scanner-matchable literal in source — with a
+brief comment explaining why it's built that way. For example, build a
+Stripe-shaped key as `` `sk_${"live"}_${body}` `` rather than the literal
+`sk_live_...` string, or assemble a connection string's `user:pass@host`
+segment from separate variables instead of writing the full URI inline.
+
+**Card numbers and IBANs are exempt** — write them as plain literals. They
+have to be checksum-valid (Luhn for cards, mod-97 for IBANs) for the
+detector tests to be meaningful, and neither push protection nor secret
+scanning flags them, so there's no scanner to appease and no benefit to
+obscuring them. The de-literalization rule targets API keys, auth tokens,
+connection strings, and private key blocks specifically — the shapes GitHub
+actually scans for.
+
+CI enforces this with a fixture-hygiene grep over the test directories; see
+`.github/workflows/ci.yml`.
+
 ## Running tests locally
 
 ```bash

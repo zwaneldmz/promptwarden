@@ -2,6 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { evaluate, toLogRecord, toUserMessage } from "../src/engine.js";
 import { parsePolicy, Policy } from "../src/policy.js";
+import {
+  pemArmor,
+  pemBlock,
+  jwtLike,
+  stripeKey,
+  awsAccessKeyId,
+  githubFineGrainedPat,
+  connectionUri,
+  mssqlConnectionString,
+  azureStorageConnectionString,
+} from "./fixtures.js";
 
 /**
  * False-positive corpus + bulk_pii coverage.
@@ -36,6 +47,16 @@ const allDetectorsActive: Policy = parsePolicy({
   ],
 });
 
+// JWT-shaped (three dot-separated base64url segments) but the first segment
+// decodes to plain text ("not json at all, just text"), not JSON — reused
+// below both as an FP-corpus entry and in the dedicated jwt negative test.
+// Assembled via jwtLike() (test/fixtures.ts) rather than written out whole.
+const NOT_A_JWT = jwtLike(
+  "bm90IGpzb24gYXQgYWxsLCBqdXN0IHRleHQ",
+  "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+  "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+);
+
 const FALSE_POSITIVE_CORPUS: Array<[label: string, text: string]> = [
   ["invoice number, bare", "RE-2026-004512"],
   ["invoice number, in a sentence", "Please process invoice RE-2026-004512 by Friday."],
@@ -63,11 +84,7 @@ const FALSE_POSITIVE_CORPUS: Array<[label: string, text: string]> = [
     "IBAN-shaped, valid prefix but embedded in a longer alphanumeric run (not standalone)",
     "order ref AT611904300234573201EXTRA processed",
   ],
-  [
-    "JWT-shaped three-segment string whose header decodes but is not JSON",
-    "token bm90IGpzb24gYXQgYWxsLCBqdXN0IHRleHQ.eyJzdWIiOiIxMjM0NTY3ODkwIn0." +
-      "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c is not real",
-  ],
+  ["JWT-shaped three-segment string whose header decodes but is not JSON", `token ${NOT_A_JWT} is not real`],
   ["postgres connection string with no embedded credentials", "connect to postgres://localhost/db for the read replica"],
   [
     "long base64 blob that is not JWT-shaped (no dot-separated segments)",
@@ -198,25 +215,22 @@ function secretPolicy(detector: string): Policy {
 }
 
 test("private_key: a full PEM RSA private key block is blocked, header through footer", () => {
-  const pem = [
-    "-----BEGIN RSA PRIVATE KEY-----",
-    "MIIEowIBAAKCAQEAtestkeymaterialAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-    "-----END RSA PRIVATE KEY-----",
-  ].join("\n");
+  const { header, footer } = pemArmor("RSA");
+  const pem = pemBlock("RSA", "MIIEowIBAAKCAQEAtestkeymaterialAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
   const r = evaluate(`please debug this: ${pem}`, secretPolicy("private_key"));
   assert.equal(r.blocked, true);
   const finding = r.findings.find((f) => f.detector === "private_key")!;
-  assert.ok(finding.match.includes("BEGIN RSA PRIVATE KEY"));
-  assert.ok(finding.match.includes("END RSA PRIVATE KEY"));
+  assert.ok(finding.match.includes(header));
+  assert.ok(finding.match.includes(footer));
 });
 
 test("private_key: OPENSSH, EC, PKCS#8 (plain + encrypted), and PGP blocks are all recognized", () => {
   const variants = [
-    "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\n-----END OPENSSH PRIVATE KEY-----",
-    "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIA==\n-----END EC PRIVATE KEY-----",
-    "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg==\n-----END PRIVATE KEY-----", // PKCS#8, plain
-    "-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIFHDBOBgkqhkiG==\n-----END ENCRYPTED PRIVATE KEY-----", // PKCS#8, encrypted
-    "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQPGBGAAAA==\n-----END PGP PRIVATE KEY BLOCK-----",
+    pemBlock("OPENSSH", "b3BlbnNzaC1rZXktdjEA"),
+    pemBlock("EC", "MHcCAQEEIA=="),
+    pemBlock("", "MIIEvQIBADANBg=="), // PKCS#8, plain
+    pemBlock("ENCRYPTED", "MIIFHDBOBgkqhkiG=="), // PKCS#8, encrypted
+    pemBlock("PGP", "lQPGBGAAAA==", true), // PGP PRIVATE KEY BLOCK
   ];
   for (const pem of variants) {
     const r = evaluate(pem, secretPolicy("private_key"));
@@ -225,17 +239,18 @@ test("private_key: OPENSSH, EC, PKCS#8 (plain + encrypted), and PGP blocks are a
 });
 
 test("private_key: a truncated paste (header with no matching END marker) is still flagged", () => {
-  const r = evaluate(
-    "here's what I have so far: -----BEGIN RSA PRIVATE KEY-----\nMIIEow",
-    secretPolicy("private_key"),
-  );
+  const { header } = pemArmor("RSA");
+  const r = evaluate(`here's what I have so far: ${header}\nMIIEow`, secretPolicy("private_key"));
   assert.equal(r.blocked, true);
 });
 
 test("jwt: a real three-segment token with a decodable {alg} header is blocked", () => {
   // header {"alg":"HS256","typ":"JWT"}, payload {"sub":"1234567890"}
-  const token =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+  const token = jwtLike(
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+    "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+    "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+  );
   const r = evaluate(`Authorization: Bearer ${token}`, secretPolicy("jwt"));
   assert.equal(r.blocked, true);
   assert.equal(r.findings[0].match, token);
@@ -244,19 +259,17 @@ test("jwt: a real three-segment token with a decodable {alg} header is blocked",
 test("jwt: an undecodable or non-JSON header is not flagged (decode-and-check, not pattern match)", () => {
   // Same shape (three long base64url segments) but the first segment decodes
   // to plain text, not JSON — must not be treated as a JWT.
-  const notAJwt =
-    "bm90IGpzb24gYXQgYWxsLCBqdXN0IHRleHQ.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-  const r = evaluate(notAJwt, secretPolicy("jwt"));
+  const r = evaluate(NOT_A_JWT, secretPolicy("jwt"));
   assert.equal(r.findings.some((f) => f.detector === "jwt"), false);
 });
 
 test("connection_string: postgres/mysql/mongodb+srv/redis/amqp URIs with embedded credentials are blocked", () => {
   const examples = [
-    "postgres://admin:S3cretPW@db.internal:5432/prod",
-    "mysql://root:hunter2@127.0.0.1:3306/app",
-    "mongodb+srv://svc_user:p4ssword@cluster0.mongodb.net/mydb",
-    "redis://default:redispass@cache.internal:6379",
-    "amqp://guest:guestpass@broker.internal:5672/vhost",
+    connectionUri("postgres", "admin", "S3cretPW", "db.internal:5432/prod"),
+    connectionUri("mysql", "root", "hunter2", "127.0.0.1:3306/app"),
+    connectionUri("mongodb+srv", "svc_user", "p4ssword", "cluster0.mongodb.net/mydb"),
+    connectionUri("redis", "default", "redispass", "cache.internal:6379"),
+    connectionUri("amqp", "guest", "guestpass", "broker.internal:5672/vhost"),
   ];
   for (const uri of examples) {
     const r = evaluate(`connect using ${uri} please`, secretPolicy("connection_string"));
@@ -265,9 +278,8 @@ test("connection_string: postgres/mysql/mongodb+srv/redis/amqp URIs with embedde
 });
 
 test("connection_string: MSSQL/ODBC and Azure-style key=value forms with a populated password are blocked", () => {
-  const mssql = "Server=tcp:myserver.database.windows.net;Database=mydb;User ID=admin;Password=Sup3rSecret!;";
-  const azure =
-    "DefaultEndpointsProtocol=https;AccountName=mystorage;AccountKey=abcd1234efgh5678ijkl==;EndpointSuffix=core.windows.net";
+  const mssql = mssqlConnectionString("myserver.database.windows.net", "mydb", "admin", "Sup3rSecret!");
+  const azure = azureStorageConnectionString("mystorage", "abcd1234efgh5678ijkl==");
   for (const cs of [mssql, azure]) {
     const r = evaluate(cs, secretPolicy("connection_string"));
     assert.equal(r.blocked, true, `expected connection_string finding for ${cs}`);
@@ -275,25 +287,25 @@ test("connection_string: MSSQL/ODBC and Azure-style key=value forms with a popul
 });
 
 test("api_key: AWS temporary (ASIA) access key ids are recognized alongside AKIA", () => {
-  const r = evaluate("export AWS_ACCESS_KEY_ID=ASIAABCDEFGHIJ123456", secretPolicy("api_key"));
+  const key = awsAccessKeyId("ASIA", "ABCDEFGHIJ123456");
+  const r = evaluate(`export AWS_ACCESS_KEY_ID=${key}`, secretPolicy("api_key"));
   assert.equal(r.blocked, true);
 });
 
 test("api_key: GitHub fine-grained PAT (github_pat_) is recognized", () => {
-  const r = evaluate(
-    "token: github_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz1234567890",
-    secretPolicy("api_key"),
-  );
+  const pat = githubFineGrainedPat("11ABCDEFG0abcdefghijklmnopqrstuvwxyz1234567890");
+  const r = evaluate(`token: ${pat}`, secretPolicy("api_key"));
   assert.equal(r.blocked, true);
 });
 
 test("api_key: Stripe live secret and restricted keys (sk_live_/rk_live_) are recognized", () => {
-  // Assembled at runtime rather than written out: a key-shaped literal here
-  // trips GitHub's push protection, which cannot tell a fixture from a leak.
+  // Assembled at runtime via stripeKey() (test/fixtures.ts) rather than
+  // written out: a key-shaped literal here trips GitHub's push protection,
+  // which cannot tell a fixture from a leak.
   const body = "51H7qXKG5Y6ZQvW3vN9pQrStUvWxYz";
-  const secret = evaluate(`STRIPE_KEY=sk_${"live"}_${body}`, secretPolicy("api_key"));
+  const secret = evaluate(`STRIPE_KEY=${stripeKey("sk", body)}`, secretPolicy("api_key"));
   assert.equal(secret.blocked, true);
-  const restricted = evaluate(`STRIPE_KEY=rk_${"live"}_${body}`, secretPolicy("api_key"));
+  const restricted = evaluate(`STRIPE_KEY=${stripeKey("rk", body)}`, secretPolicy("api_key"));
   assert.equal(restricted.blocked, true);
 });
 

@@ -130,3 +130,82 @@ jobs:
           fi
 
           echo "No-egress gate passed: no fetch/XHR/sendBeacon/WebSocket/EventSource/dynamic-import/Image-beacon/connectNative/node:net-family calls found, and no child_process usage outside the reviewed MCP gateway spawn."
+
+      # Separate from the no-egress gate above — this one has nothing to do
+      # with network calls. This project's test corpus is inherently made of
+      # credential-shaped strings (that's what a DLP tool's detectors need to
+      # be tested against), which collides with GitHub's own scanners: a
+      # literal that matches one of these shapes either blocks the push
+      # (push protection) or files a secret-scanning alert indistinguishable
+      # from a real leak. See CONTRIBUTING.md, "Test fixtures for a DLP
+      # tool" — the convention is that any such fixture is assembled at
+      # runtime from parts, never written as a literal. This gate enforces
+      # that the convention can't silently regress.
+      - name: Fixture hygiene gate
+        run: |
+          set -euo pipefail
+
+          # Patterns describe SHAPES (vendor prefix + a length/charset a real
+          # key of that kind would have), not real values — no full,
+          # plausible credential appears anywhere in this file, only prefix
+          # literals and regex character classes/quantifiers. That also
+          # means this step cannot trip push protection or secret scanning
+          # on itself: none of these lines is a credential, they're patterns
+          # describing what one looks like.
+          #
+          # Card numbers and IBANs are deliberately NOT covered here (see
+          # CONTRIBUTING.md): they must be checksum-valid literals to test
+          # the credit_card/iban detectors meaningfully, and neither push
+          # protection nor secret scanning flags them, so there is no
+          # scanner to appease and nothing to de-literalize.
+          #
+          # The connection-string pattern's credential segments exclude
+          # quote/template/interpolation characters ($ " ' ` { }) on purpose:
+          # a properly runtime-assembled fixture (e.g. a template literal
+          # with `${...}` holes for the user/pass parts) necessarily
+          # introduces one of those characters right where a real embedded
+          # credential would otherwise read as plain text, so the fixed form
+          # naturally stops matching without needing a separate allowlist.
+          FIXTURE_PATTERN='\b(AKIA|ASIA)[0-9A-Z]{16}\b'
+          FIXTURE_PATTERN+='|\bgh[pousr]_[A-Za-z0-9]{20,}\b'
+          FIXTURE_PATTERN+='|\bgithub_pat_[A-Za-z0-9_]{20,}\b'
+          FIXTURE_PATTERN+='|\bxox[baprs]-[A-Za-z0-9-]{10,}\b'
+          FIXTURE_PATTERN+='|\bAIza[0-9A-Za-z_-]{20,}\b'
+          FIXTURE_PATTERN+='|\b(sk|rk)_live_[A-Za-z0-9]{10,}\b'
+          FIXTURE_PATTERN+='|\bsk-ant-[A-Za-z0-9_-]{10,}\b'
+          FIXTURE_PATTERN+='|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+          FIXTURE_PATTERN+='|[a-zA-Z][a-zA-Z0-9+.-]*://[^[:space:]:/@$"'"'"'\`{}]+:[^[:space:]@$"'"'"'\`{}]+@'
+
+          # Scoped to where DLP test fixtures actually live, not the whole
+          # tree — a detector-name string like "api_key" elsewhere in the
+          # codebase is not a fixture. Only tracked files: an untracked
+          # scratch file can never be pushed, so it can't trip a scanner.
+          TEST_DIRS=(
+            "packages/policy-engine/test"
+            "apps/cli/test"
+          )
+
+          echo "Scanning tracked test files for credential-shaped literals: $FIXTURE_PATTERN"
+          FOUND=0
+          for d in "${TEST_DIRS[@]}"; do
+            if [ ! -d "$d" ]; then
+              echo "::error::fixture hygiene gate target missing: $d"
+              FOUND=1
+              continue
+            fi
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              MATCHES="$(grep -nE "$FIXTURE_PATTERN" "$f" || true)"
+              if [ -n "$MATCHES" ]; then
+                echo "$MATCHES" | sed "s|^|$f:|"
+                FOUND=1
+              fi
+            done < <(git ls-files "$d")
+          done
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo "::error::FIXTURE HYGIENE GATE FAILED: a credential-shaped literal was found in a test fixture above. Assemble it at runtime from parts instead — see CONTRIBUTING.md, 'Test fixtures for a DLP tool'."
+            exit 1
+          fi
+
+          echo "Fixture hygiene gate passed: no credential-shaped literals found in tracked test fixtures under ${TEST_DIRS[*]}."

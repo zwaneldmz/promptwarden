@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { evaluate, toLogRecord } from "../src/engine.js";
 import { parsePolicy, hostMatches, Policy } from "../src/policy.js";
+import { openAiStyleKey } from "./fixtures.js";
 
 const strict: Policy = parsePolicy({
   version: 1,
@@ -60,7 +61,7 @@ test("emails are redacted with surrounding text intact", () => {
 });
 
 test("API keys are blocked", () => {
-  const r = evaluate("use sk-abcdefghijklmnopqrstuvwx123456 for the demo", strict);
+  const r = evaluate(`use ${openAiStyleKey("abcdefghijklmnopqrstuvwx123456")} for the demo`, strict);
   assert.equal(r.blocked, true);
 });
 

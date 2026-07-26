@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { evaluate } from "../src/engine.js";
 import { parsePolicy, Policy } from "../src/policy.js";
+import { openAiStyleKey } from "./fixtures.js";
 
 /**
  * Deterministic ~10 KB prompt: repeating prose paragraph interleaved with a
@@ -24,7 +25,7 @@ function buildPrompt(): string {
     "iban: at61 1904 3002 3457 3202", // mod-97 invalid, lowercase
     "contact anna.maier@example.at for details",
     "call +43 660 1234567 about the ticket",
-    "key sk-abcdefghijklmnopqrstuvwx123456 is a demo secret",
+    `key ${openAiStyleKey("abcdefghijklmnopqrstuvwx123456")} is a demo secret`,
     "svnr 1237 010180 on file",
     "see ticket CUST-004211 today",
     "project code PROJ-77-ALPHA is confidential",

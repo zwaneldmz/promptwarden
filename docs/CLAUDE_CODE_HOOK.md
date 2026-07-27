@@ -1,6 +1,6 @@
-# Claude Code hook (`promptwarden hook claude-code`)
+# Claude Code hook (`wardkeep hook claude-code`)
 
-Wires PromptWarden's policy engine into Claude Code as two hooks: `UserPromptSubmit` (the
+Wires Wardkeep's policy engine into Claude Code as two hooks: `UserPromptSubmit` (the
 human's typed/pasted prompt) and `PreToolUse` (every tool call's arguments). Implemented in
 [`apps/cli/src/hooks/claude-code.ts`](../apps/cli/src/hooks/claude-code.ts); see that file's
 module doc for the full per-branch reasoning. This document covers the operational contract:
@@ -93,8 +93,8 @@ stderr" for one event, "exit 0 + JSON" for the other).
 
 One environment variable / flag pair, both equivalent:
 
-- `PROMPTWARDEN_HOOK_ALLOW_WARN=1` (or `true`/`yes`/`on`)
-- `promptwarden hook claude-code --allow-warn`
+- `WARDKEEP_HOOK_ALLOW_WARN=1` (or `true`/`yes`/`on`)
+- `wardkeep hook claude-code --allow-warn`
 
 Only affects `UserPromptSubmit`, and only `warn`/`redact`-level findings. By default those
 BLOCK the prompt (see "What it does NOT gate" above for why `redact` can't do anything softer
@@ -119,14 +119,14 @@ shareable via version control):
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "promptwarden hook claude-code" }
+          { "type": "command", "command": "wardkeep hook claude-code" }
         ]
       }
     ],
     "PreToolUse": [
       {
         "hooks": [
-          { "type": "command", "command": "promptwarden hook claude-code" }
+          { "type": "command", "command": "wardkeep hook claude-code" }
         ]
       }
     ]
@@ -147,11 +147,11 @@ To downgrade `UserPromptSubmit`'s warn/redact handling fleet-wide, set the envir
 in the command itself so it isn't relying on the invoking shell's environment:
 
 ```json
-{ "type": "command", "command": "PROMPTWARDEN_HOOK_ALLOW_WARN=1 promptwarden hook claude-code" }
+{ "type": "command", "command": "WARDKEEP_HOOK_ALLOW_WARN=1 wardkeep hook claude-code" }
 ```
 
 Policy resolution follows the CLI's usual precedence (`docs/ROADMAP.md` §2): a root-owned
-`/etc/promptwarden/policy.json` is the fleet floor a user's own settings can't touch; see
+`/etc/wardkeep/policy.json` is the fleet floor a user's own settings can't touch; see
 `apps/cli/src/policy.ts`'s module doc for the full chain.
 
 ## Verify
@@ -163,7 +163,7 @@ claude
 > /hooks
 ```
 
-Select `UserPromptSubmit` and `PreToolUse` and confirm `promptwarden hook claude-code` appears
+Select `UserPromptSubmit` and `PreToolUse` and confirm `wardkeep hook claude-code` appears
 under each.
 
 Then run a live canary — a synthetic, Luhn-valid test card number that is not a real card (the
@@ -176,7 +176,7 @@ same fixture this repo's own tests use, safe to paste anywhere):
 1. **`UserPromptSubmit` canary**: in a Claude Code session, submit a prompt containing that
    number (e.g. "here's a card on file: 4532 0151 1283 0366, can you note it down"). Under the
    built-in default policy (`credit_card: warn`), you should see the prompt blocked with a
-   PromptWarden reason mentioning `credit_card` — never the digits themselves. If it goes
+   Wardkeep reason mentioning `credit_card` — never the digits themselves. If it goes
    through unblocked, the hook isn't wired up; check `/hooks` and the settings file location
    (project vs. user vs. managed — see "Configure hook location" in the official docs).
 2. **`PreToolUse` canary**: ask Claude to run `echo "card: 4532 0151 1283 0366"` via Bash.
@@ -185,7 +185,7 @@ same fixture this repo's own tests use, safe to paste anywhere):
    number. Under `credit_card: block`, the tool call should be denied with a reason mentioning
    `credit_card` and no digits.
 3. **Negative control**: run the same two probes with an ordinary, non-sensitive prompt/command
-   and confirm nothing is blocked and no PromptWarden output appears — the point of the canary
+   and confirm nothing is blocked and no Wardkeep output appears — the point of the canary
    is to prove the gate is *live*, not to prove it blocks everything.
 
 Do not use a real card number for this, even your own — the canary only needs to be
@@ -196,24 +196,24 @@ real number would needlessly put real payment data through a terminal transcript
 ## Debug
 
 If the hook doesn't seem to be firing at all: start Claude Code with `claude --debug-file
-/tmp/claude.log`, reproduce, then `grep -i promptwarden /tmp/claude.log` — this shows every
+/tmp/claude.log`, reproduce, then `grep -i wardkeep /tmp/claude.log` — this shows every
 hook invocation, its exit code, and its stdout/stderr, including cases where this adapter fails
 open (silently) that would otherwise be invisible from the transcript.
 
 Locally-recorded events (when `logging` is `"event"` or `"content"`) land at
-`${XDG_STATE_HOME:-~/.local/state}/promptwarden/events.jsonl`, one JSON line per non-clean
+`${XDG_STATE_HOME:-~/.local/state}/wardkeep/events.jsonl`, one JSON line per non-clean
 outcome, tagged with `host: "claude-code:UserPromptSubmit"` or `"claude-code:PreToolUse"`.
 
 ## Verified behavior
 
 Exercised against real `claude -p` sessions (Claude Code 2.1.215), policy loaded from
-`$PROMPTWARDEN_POLICY`:
+`$WARDKEEP_POLICY`:
 
 | Scenario | Result |
 |---|---|
-| `UserPromptSubmit`, prompt contains a Luhn-valid card, `credit_card: block` | Prompt rejected: `UserPromptSubmit operation blocked by hook: PromptWarden blocked this prompt (block: credit_card).` The model never saw it. |
+| `UserPromptSubmit`, prompt contains a Luhn-valid card, `credit_card: block` | Prompt rejected: `UserPromptSubmit operation blocked by hook: Wardkeep blocked this prompt (block: credit_card).` The model never saw it. |
 | `UserPromptSubmit`, clean prompt | Passes through untouched, no added latency visible to the user. |
-| `UserPromptSubmit`, `credit_card: redact` | Blocked, with the reason naming `PROMPTWARDEN_HOOK_ALLOW_WARN=1` as the downgrade — this event cannot rewrite a prompt. |
+| `UserPromptSubmit`, `credit_card: redact` | Blocked, with the reason naming `WARDKEEP_HOOK_ALLOW_WARN=1` as the downgrade — this event cannot rewrite a prompt. |
 | `PreToolUse`, model writes a card via `Write`, `credit_card: redact` | Allowed with `updatedInput`; the file on disk contained `[REDACTED:CARD]on file`. The card never reached the filesystem. |
 | `PreToolUse`, model writes an `sk-` key, `api_key: block` | Denied; no file created. |
 | `PreToolUse`, connection URI with credentials in a `Bash` command | Denied. |
@@ -232,7 +232,7 @@ Two things that testing made obvious:
 
 Blocking `credit_card`/`iban` in a repository whose own test suite holds checksum-valid
 fixtures makes that repository un-editable: a `PreToolUse` scan of an `Edit` touching
-`bench.test.ts` sees a real card and denies it. This repo's `.promptwarden.json` therefore sets
+`bench.test.ts` sees a real card and denies it. This repo's `.wardkeep.json` therefore sets
 those to `observe` (recorded, never interrupts) and keeps `block` for the categories that never
 legitimately appear in source — `private_key`, `connection_string`, `api_key`, `jwt`. Any repo
 with security fixtures needs the same split.

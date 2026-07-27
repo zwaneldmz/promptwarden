@@ -1,8 +1,8 @@
 /**
- * PromptWarden for VS Code — editor-side detection only.
+ * Wardkeep for VS Code — editor-side detection only.
  *
  * WHAT THIS DOES: runs the same pure, local policy engine
- * (`@promptwarden/policy-engine`) used by the CLI and the browser extension
+ * (`@wardkeep/policy-engine`) used by the CLI and the browser extension
  * over the text of files you open or save, and publishes the findings as
  * `vscode.Diagnostic`s in the Problems panel. Plus a status-bar count and two
  * commands for scanning the active file or a set of files/folders on demand.
@@ -16,7 +16,7 @@
  * sees. This extension does not intercept, read, or gate the Copilot/Cursor
  * chat panel, inline suggestions, or any agent-mode tool call, and does not
  * attempt to. See docs/IDE.md for the full surface-by-surface breakdown and
- * `promptwarden emit-exclusions` (apps/cli/src/exclusions.ts) for the only
+ * `wardkeep emit-exclusions` (apps/cli/src/exclusions.ts) for the only
  * lever that reaches those surfaces at all: vendor-side, best-effort path
  * exclusions.
  *
@@ -30,12 +30,12 @@
  */
 import { isAbsolute, join } from "node:path";
 import * as vscode from "vscode";
-import { Action, EvaluationResult, Finding, Policy, evaluate, parsePolicy, toUserMessage } from "@promptwarden/policy-engine";
+import { Action, EvaluationResult, Finding, Policy, evaluate, parsePolicy, toUserMessage } from "@wardkeep/policy-engine";
 import { BUILTIN_DEFAULT_POLICY } from "./default-policy.js";
 
-const CONFIG_SECTION = "promptwarden";
+const CONFIG_SECTION = "wardkeep";
 const POLICY_PATH_SETTING = "policyPath";
-const DIAGNOSTIC_SOURCE = "PromptWarden";
+const DIAGNOSTIC_SOURCE = "Wardkeep";
 const SKIP_DIRS_GLOB = "**/{node_modules,.git,dist,out,build}/**";
 
 /** Only file-backed or unsaved-buffer documents are scanned — not output channels, diffs, settings JSON views, etc. */
@@ -63,7 +63,7 @@ function severityFor(action: Action): vscode.DiagnosticSeverity {
  */
 function findingToDiagnostic(document: vscode.TextDocument, finding: Finding): vscode.Diagnostic {
   const range = new vscode.Range(document.positionAt(finding.start), document.positionAt(finding.end));
-  const message = `PromptWarden: ${finding.detector} (${finding.action})`;
+  const message = `Wardkeep: ${finding.detector} (${finding.action})`;
   const diagnostic = new vscode.Diagnostic(range, message, severityFor(finding.action));
   diagnostic.source = DIAGNOSTIC_SOURCE;
   diagnostic.code = finding.detector;
@@ -91,11 +91,11 @@ function resolvePolicyUri(raw: string, workspaceFolder: vscode.WorkspaceFolder |
 export function activate(context: vscode.ExtensionContext): void {
   const diagnostics = vscode.languages.createDiagnosticCollection(CONFIG_SECTION);
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.name = "PromptWarden";
-  statusBarItem.command = "promptwarden.scanActiveFile";
+  statusBarItem.name = "Wardkeep";
+  statusBarItem.command = "wardkeep.scanActiveFile";
   context.subscriptions.push(diagnostics, statusBarItem);
 
-  // Cached per-window; a config change to promptwarden.policyPath (or the
+  // Cached per-window; a config change to wardkeep.policyPath (or the
   // policy file itself being saved) invalidates it. Loading is async
   // (vscode.workspace.fs.readFile), so callers always go through getPolicy().
   let cachedPolicy: Policy | undefined;
@@ -112,7 +112,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // say so once. The message names the configured path and the parse
       // error, never anything from a scanned document.
       void vscode.window.showWarningMessage(
-        `PromptWarden: could not load policy from "${uri.fsPath}" (${(err as Error).message}). ` +
+        `Wardkeep: could not load policy from "${uri.fsPath}" (${(err as Error).message}). ` +
           `Using the built-in default policy instead.`,
       );
       return BUILTIN_DEFAULT_POLICY;
@@ -127,17 +127,17 @@ export function activate(context: vscode.ExtensionContext): void {
   function updateStatusBar(): void {
     const editor = vscode.window.activeTextEditor;
     if (!editor || !isScannable(editor.document)) {
-      statusBarItem.text = "$(shield) PromptWarden";
-      statusBarItem.tooltip = "PromptWarden: no scannable document active";
+      statusBarItem.text = "$(shield) Wardkeep";
+      statusBarItem.tooltip = "Wardkeep: no scannable document active";
       statusBarItem.show();
       return;
     }
     const count = diagnostics.get(editor.document.uri)?.length ?? 0;
-    statusBarItem.text = count === 0 ? "$(shield) PromptWarden: clean" : `$(shield) PromptWarden: ${count}`;
+    statusBarItem.text = count === 0 ? "$(shield) Wardkeep: clean" : `$(shield) Wardkeep: ${count}`;
     statusBarItem.tooltip =
       count === 0
-        ? "PromptWarden: no findings in the active file"
-        : `PromptWarden: ${count} finding(s) in the active file — see the Problems panel`;
+        ? "Wardkeep: no findings in the active file"
+        : `Wardkeep: ${count} finding(s) in the active file — see the Problems panel`;
     statusBarItem.show();
   }
 
@@ -147,7 +147,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // "vscode" — this extension's fixed surface label. It never calls
     // toLogRecord/recordEvent itself, but a policy's host-scoped exceptions
     // are shared vocabulary across every adapter, so this still has to be
-    // the same string any other PromptWarden surface would use for "the
+    // the same string any other Wardkeep surface would use for "the
     // VS Code extension" if it ever logged an event.
     const result = evaluate(document.getText(), policy, "vscode");
     diagnostics.set(document.uri, result.findings.map((f) => findingToDiagnostic(document, f)));
@@ -164,7 +164,7 @@ export function activate(context: vscode.ExtensionContext): void {
       canSelectMany: true,
       canSelectFiles: true,
       canSelectFolders: true,
-      openLabel: "Scan with PromptWarden",
+      openLabel: "Scan with Wardkeep",
     });
     return picked ?? [];
   }
@@ -196,18 +196,18 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("promptwarden.scanActiveFile", async () => {
+    vscode.commands.registerCommand("wardkeep.scanActiveFile", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) {
-        void vscode.window.showInformationMessage("PromptWarden: no active file to scan.");
+        void vscode.window.showInformationMessage("Wardkeep: no active file to scan.");
         return;
       }
       const result = await scanDocument(editor.document);
-      if (result) void vscode.window.showInformationMessage(`PromptWarden: ${toUserMessage(result)}`);
+      if (result) void vscode.window.showInformationMessage(`Wardkeep: ${toUserMessage(result)}`);
     }),
 
     vscode.commands.registerCommand(
-      "promptwarden.scanWorkspaceSelection",
+      "wardkeep.scanWorkspaceSelection",
       async (clickedUri?: vscode.Uri, selectedUris?: vscode.Uri[]) => {
         const targets = await resolveSelectionTargets(clickedUri, selectedUris);
         if (targets.length === 0) return;
@@ -222,12 +222,12 @@ export function activate(context: vscode.ExtensionContext): void {
           } catch {
             // Binary or otherwise unreadable-as-text file — skip it. This
             // command is a convenience scan, not a completeness guarantee;
-            // apps/cli's `promptwarden scan --file` is the strict adapter.
+            // apps/cli's `wardkeep scan --file` is the strict adapter.
           }
         }
 
         void vscode.window.showInformationMessage(
-          `PromptWarden: scanned ${fileUris.length} file(s) — ${toUserMessage(mergeResults(results))}`,
+          `Wardkeep: scanned ${fileUris.length} file(s) — ${toUserMessage(mergeResults(results))}`,
         );
       },
     ),

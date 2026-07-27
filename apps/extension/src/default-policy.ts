@@ -1,4 +1,4 @@
-import { Policy } from "@promptwarden/policy-engine";
+import { Policy } from "@wardkeep/policy-engine";
 
 /**
  * Standalone default: the privacy-conscious individual's profile.

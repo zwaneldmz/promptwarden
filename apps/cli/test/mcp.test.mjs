@@ -140,7 +140,7 @@ test("mcp: a blocked tools/call never reaches the child; a synthesized JSON-RPC 
 
   const { status, stdout, stderr } = runGateway({
     cwd,
-    env: { ...env, PROMPTWARDEN_POLICY: policyPath },
+    env: { ...env, WARDKEEP_POLICY: policyPath },
     messages: [call],
   });
   assert.equal(status, 0); // the fake server itself still exits cleanly — nothing broke downstream
@@ -175,7 +175,7 @@ test("mcp: a redact-action tools/call arrives at the child with the sensitive va
 
   const { status, stdout, stderr } = runGateway({
     cwd,
-    env: { ...env, PROMPTWARDEN_POLICY: policyPath },
+    env: { ...env, WARDKEEP_POLICY: policyPath },
     messages: [call],
   });
   assert.equal(status, 0);
@@ -210,7 +210,7 @@ test("mcp: a tool RESULT carrying an IBAN is blocked — neutralized before it r
 
   const { status, stdout } = runGateway({
     cwd,
-    env: { ...env, PROMPTWARDEN_POLICY: policyPath },
+    env: { ...env, WARDKEEP_POLICY: policyPath },
     messages: [call],
   });
   assert.equal(status, 0);
@@ -238,7 +238,7 @@ test("mcp: a tool RESULT carrying an IBAN is redacted when the rule says redact,
 
   const { status, stdout } = runGateway({
     cwd,
-    env: { ...env, PROMPTWARDEN_POLICY: policyPath },
+    env: { ...env, WARDKEEP_POLICY: policyPath },
     messages: [call],
   });
   assert.equal(status, 0);
@@ -286,7 +286,7 @@ test("mcp: --help exits 0 with usage", async () => {
   const { cwd, env } = await isolatedEnv("pw-mcp-help");
   const result = spawnSync(process.execPath, [cliPath, "mcp", "--help"], { cwd, env, encoding: "utf8" });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /Usage: promptwarden mcp/);
+  assert.match(result.stdout, /Usage: wardkeep mcp/);
 });
 
 test("mcp: a missing \"--\" separator is a config error, exit 3", async () => {
@@ -298,7 +298,7 @@ test("mcp: a missing \"--\" separator is a config error, exit 3", async () => {
 
 test("mcp: a server command that cannot be spawned is a config error, exit 3", async () => {
   const { cwd, env } = await isolatedEnv("pw-mcp-spawnfail");
-  const result = spawnSync(process.execPath, [cliPath, "mcp", "--", "promptwarden-definitely-not-a-real-binary-xyz"], {
+  const result = spawnSync(process.execPath, [cliPath, "mcp", "--", "wardkeep-definitely-not-a-real-binary-xyz"], {
     cwd,
     env,
     encoding: "utf8",

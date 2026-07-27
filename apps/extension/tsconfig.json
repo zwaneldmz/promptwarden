@@ -7,7 +7,7 @@
     "noEmit": true,
     "types": ["chrome"],
     "typeRoots": ["../../node_modules/@types"],
-    "paths": { "@promptwarden/policy-engine": ["../../packages/policy-engine/src/index.ts"] }
+    "paths": { "@wardkeep/policy-engine": ["../../packages/policy-engine/src/index.ts"] }
   },
   "include": ["src/**/*.ts"]
 }

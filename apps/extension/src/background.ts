@@ -166,7 +166,7 @@ let writeQueue: Promise<void> = Promise.resolve();
 function enqueueAppend(key: string, entry: unknown, max: number): void {
   writeQueue = writeQueue
     .then(() => appendCapped(key, entry, max))
-    .catch((err) => console.warn("promptwarden: buffer write failed", err));
+    .catch((err) => console.warn("wardkeep: buffer write failed", err));
 }
 
 /**
@@ -187,7 +187,7 @@ function enqueueStartupPrune(): void {
         }
       }
     })
-    .catch((err) => console.warn("promptwarden: startup retention prune failed", err));
+    .catch((err) => console.warn("wardkeep: startup retention prune failed", err));
 }
 enqueueStartupPrune();
 
@@ -392,7 +392,7 @@ async function syncExtraHostCoverage(): Promise<void> {
   } catch (err) {
     const kind: BackgroundDiagnosticKind = "extra-hosts-error";
     recordDiagnostic(kind);
-    console.warn("promptwarden: extra-hosts sync failed", err);
+    console.warn("wardkeep: extra-hosts sync failed", err);
   }
 }
 

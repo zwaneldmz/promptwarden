@@ -1,6 +1,6 @@
-# MCP stdio gateway (`promptwarden mcp -- <server command>`)
+# MCP stdio gateway (`wardkeep mcp -- <server command>`)
 
-Wraps a real MCP server's stdio transport with PromptWarden's policy engine so both directions
+Wraps a real MCP server's stdio transport with Wardkeep's policy engine so both directions
 of MCP traffic get scanned: the arguments a client sends into `tools/call`, and the text content
 a tool result sends back. Implemented in
 [`apps/cli/src/mcp/gateway.ts`](../apps/cli/src/mcp/gateway.ts); see that file's module doc for
@@ -20,7 +20,7 @@ mechanism in this repo that sees tool **results**, not just arguments:
 
 Every event is recorded through the same `recordEvent`/`toLogRecord` path the rest of the CLI
 uses (`cli:mcp:call` / `cli:mcp:result` as the surface label), governed by the same policy
-document and discovery precedence as `promptwarden scan` — see
+document and discovery precedence as `wardkeep scan` — see
 [`apps/cli/src/policy.ts`](../apps/cli/src/policy.ts).
 
 Everything that is **not** a `tools/call` request or a response the gateway is tracking —
@@ -30,7 +30,7 @@ gateway never re-serializes a message it isn't modifying, so it stays transparen
 features it doesn't need to understand.
 
 Because it reaches the MCP client through nothing more than a config-file edit (point the
-client's server `command` at `promptwarden mcp -- <old command>` instead of `<old command>`
+client's server `command` at `wardkeep mcp -- <old command>` instead of `<old command>`
 directly), it covers **every MCP-speaking client that can start a stdio server** — Claude Code,
 Claude Desktop, Cursor, VS Code, Windsurf, JetBrains, and anything else that follows the same
 "spawn a command, talk NDJSON over its stdin/stdout" contract.
@@ -69,7 +69,7 @@ Stated plainly, because installing the gateway is easy to over-read:
 
 ## Configuration
 
-In every example, `promptwarden mcp -- <original command...>` replaces whatever the client used
+In every example, `wardkeep mcp -- <original command...>` replaces whatever the client used
 to invoke the real MCP server directly. Everything after the literal `--` is passed straight
 through to `child_process.spawn` with no shell involved — quote/escape it exactly as you would
 the original command's argv, not as a shell string.
@@ -82,7 +82,7 @@ Project-scoped config, checked into the repo at `.mcp.json`:
 {
   "mcpServers": {
     "my-server": {
-      "command": "promptwarden",
+      "command": "wardkeep",
       "args": ["mcp", "--", "npx", "-y", "@some/mcp-server"]
     }
   }
@@ -99,7 +99,7 @@ Project-scoped config, checked into the repo at `.mcp.json`:
 {
   "mcpServers": {
     "my-server": {
-      "command": "promptwarden",
+      "command": "wardkeep",
       "args": ["mcp", "--", "node", "/absolute/path/to/server/index.js"]
     }
   }
@@ -114,7 +114,7 @@ Project-scoped config, checked into the repo at `.mcp.json`:
 {
   "mcpServers": {
     "my-server": {
-      "command": "promptwarden",
+      "command": "wardkeep",
       "args": ["mcp", "--", "npx", "-y", "@some/mcp-server"]
     }
   }
@@ -130,7 +130,7 @@ Project-scoped config, checked into the repo at `.mcp.json`:
   "servers": {
     "my-server": {
       "type": "stdio",
-      "command": "promptwarden",
+      "command": "wardkeep",
       "args": ["mcp", "--", "node", "/absolute/path/to/server/index.js"]
     }
   }
@@ -138,17 +138,17 @@ Project-scoped config, checked into the repo at `.mcp.json`:
 ```
 
 In every case, if the original server config carried its own `env` block, keep it — the gateway
-spawns the child with the same environment `promptwarden mcp` itself runs under, so any
+spawns the child with the same environment `wardkeep mcp` itself runs under, so any
 credentials the real server needs still reach it unchanged; only the arguments and results the
 server exchanges with the client are inspected.
 
 ### Policy
 
-The gateway resolves its policy the same way `promptwarden scan` does — see the precedence chain
+The gateway resolves its policy the same way `wardkeep scan` does — see the precedence chain
 in [`apps/cli/src/policy.ts`](../apps/cli/src/policy.ts)'s module doc
-(`/etc/promptwarden/policy.json` > `$PROMPTWARDEN_POLICY` > `$XDG_CONFIG_HOME` > repo-local
-`.promptwarden.json` (strictness-monotonic only) > built-in default). There is no gateway-specific
-policy flag; set `$PROMPTWARDEN_POLICY` in the client's `env` block for that server entry if you
+(`/etc/wardkeep/policy.json` > `$WARDKEEP_POLICY` > `$XDG_CONFIG_HOME` > repo-local
+`.wardkeep.json` (strictness-monotonic only) > built-in default). There is no gateway-specific
+policy flag; set `$WARDKEEP_POLICY` in the client's `env` block for that server entry if you
 want a policy other than whatever the ambient environment resolves to.
 
 ## Verify it's live
@@ -158,7 +158,7 @@ want a policy other than whatever the ambient environment resolves to.
 2. Ask the assistant to call a tool with a synthetic, Luhn-valid test card number in one of its
    arguments — for example `4532 0151 1283 0366` (the same fixture the CLI's own tests use). Under
    the built-in default policy (`credit_card: warn`) the call still goes through; switch the
-   policy's `credit_card` rule to `block` to see it refused with a PromptWarden error instead —
+   policy's `credit_card` rule to `block` to see it refused with a Wardkeep error instead —
    never the digits themselves.
 3. For the inbound direction, the canary needs to come back *in a tool result* rather than in
    what you send — point the server at data that includes the same test card number (or a

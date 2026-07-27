@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "promptwarden-repo",
+  "name": "wardkeep-repo",
   "hosts": [],
   "logging": "event",
   "defaultAction": "allow",

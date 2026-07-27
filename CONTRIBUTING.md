@@ -1,4 +1,4 @@
-# Contributing to PromptWarden
+# Contributing to Wardkeep
 
 Thanks for considering a contribution. This project is small, the
 maintainer is one person plus AI agents, and the priorities below exist to

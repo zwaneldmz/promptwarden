@@ -15,7 +15,7 @@ name: Release
 # different extension ID — see docs/RELEASING.md, "Chrome Web Store
 # re-signing") or to the npm registry (`npm publish` is a separate, later,
 # deliberate step a maintainer runs by hand once the package is ready to be
-# public under the `promptwarden` name — this workflow only proves the
+# public under the `wardkeep` name — this workflow only proves the
 # tarball it *would* publish is exactly what CI verified). It also does not
 # package apps/vscode — that extension has no build script wired into the
 # root typecheck/test/build commands yet and is out of scope here.
@@ -253,7 +253,7 @@ jobs:
           set -euo pipefail
 
           STAGE_ROOT="release-stage"
-          STAGE="$STAGE_ROOT/promptwarden-extension"
+          STAGE="$STAGE_ROOT/wardkeep-extension"
           rm -rf "$STAGE_ROOT"
           mkdir -p "$STAGE/icons"
 
@@ -285,8 +285,8 @@ jobs:
           # against the Linux runner's zip build.
           find "$STAGE" -exec touch -t 202001010000 {} +
 
-          ZIP_NAME="promptwarden-extension-v${{ steps.version.outputs.version }}.zip"
-          ( cd "$STAGE_ROOT" && find promptwarden-extension -type f | sort | zip -X -D "../$ZIP_NAME" -@ )
+          ZIP_NAME="wardkeep-extension-v${{ steps.version.outputs.version }}.zip"
+          ( cd "$STAGE_ROOT" && find wardkeep-extension -type f | sort | zip -X -D "../$ZIP_NAME" -@ )
 
           echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
           unzip -l "$ZIP_NAME"
@@ -302,7 +302,7 @@ jobs:
           # tsconfig — so a plain `npm pack` is the whole packaging step.
           ( cd apps/cli && npm pack --pack-destination "$OUT_DIR" )
 
-          TARBALL_NAME="promptwarden-${{ steps.version.outputs.version }}.tgz"
+          TARBALL_NAME="wardkeep-${{ steps.version.outputs.version }}.tgz"
           if [ ! -f "$TARBALL_NAME" ]; then
             echo "::error::expected $TARBALL_NAME after 'npm pack' in apps/cli, but it wasn't produced. Directory listing:"
             ls -la .
@@ -358,7 +358,7 @@ jobs:
           TGZ="${{ steps.package_cli.outputs.tarball_name }}"
 
           gh release create "$TAG" \
-            --title "PromptWarden $TAG" \
+            --title "Wardkeep $TAG" \
             --notes "$(cat <<NOTES
           Verify before installing — see [docs/RELEASING.md](https://github.com/${{ github.repository }}/blob/main/docs/RELEASING.md) for the exact \`cosign verify-blob\` command and how to check \`SHA256SUMS\`.
 

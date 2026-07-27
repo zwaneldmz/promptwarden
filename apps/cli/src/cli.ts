@@ -1,5 +1,5 @@
 /**
- * `promptwarden` bin entry — dispatches to the subcommand modules. Every
+ * `wardkeep` bin entry — dispatches to the subcommand modules. Every
  * import here is static; dynamic imports are banned by the CI no-egress
  * gate, so the whole dispatcher typechecks and bundles as one unit.
  * (no-egress-doc: the line above names a banned API as documentation.)
@@ -12,15 +12,15 @@ import { runScan } from "./scan.js";
 
 const VERSION = "0.1.0";
 
-const USAGE = `promptwarden — local, deterministic guardrail for sensitive data leaving this machine.
+const USAGE = `wardkeep — local, deterministic guardrail for sensitive data leaving this machine.
 
 Usage:
-  promptwarden scan [--stdin] [--file <path>]... [--json] [--strict] [--surface <label>]
-  promptwarden hook claude-code
-  promptwarden mcp -- <server command...>
-  promptwarden emit-exclusions [options]
-  promptwarden --version
-  promptwarden --help
+  wardkeep scan [--stdin] [--file <path>]... [--json] [--strict] [--surface <label>]
+  wardkeep hook claude-code
+  wardkeep mcp -- <server command...>
+  wardkeep emit-exclusions [options]
+  wardkeep --version
+  wardkeep --help
 
 Everything runs locally: deterministic, no network calls, no LLM calls.
 `;
@@ -35,7 +35,7 @@ export async function main(argv: string[]): Promise<number> {
     case "hook": {
       const [target, ...hookRest] = rest;
       if (target === "claude-code") return runClaudeCodeHook(hookRest);
-      process.stderr.write(`promptwarden hook: unknown target "${target ?? ""}"\n\n${USAGE}`);
+      process.stderr.write(`wardkeep hook: unknown target "${target ?? ""}"\n\n${USAGE}`);
       return 3;
     }
 
@@ -47,7 +47,7 @@ export async function main(argv: string[]): Promise<number> {
 
     case "--version":
     case "-v":
-      process.stdout.write(`promptwarden ${VERSION}\n`);
+      process.stdout.write(`wardkeep ${VERSION}\n`);
       return 0;
 
     case "--help":
@@ -60,7 +60,7 @@ export async function main(argv: string[]): Promise<number> {
       return 3;
 
     default:
-      process.stderr.write(`promptwarden: unknown subcommand "${command}"\n\n${USAGE}`);
+      process.stderr.write(`wardkeep: unknown subcommand "${command}"\n\n${USAGE}`);
       return 3;
   }
 }

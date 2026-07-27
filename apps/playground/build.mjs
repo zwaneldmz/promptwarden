@@ -68,7 +68,7 @@ async function buildPlaygroundBundle() {
 <html>
 <head>
 <meta charset="utf-8">
-<title>PromptWarden Playground</title>
+<title>Wardkeep Playground</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   html,body{margin:0;background:#101418;color:#e8edf2;font:14px/1.5 system-ui,sans-serif;}

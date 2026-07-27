@@ -26,8 +26,8 @@ narrow **required** permission grant:
   the required permission surface, not the optional one. A required `https://*/*` reads, to
   a reviewer or a privacy officer, as "this extension can inject into every page you visit,"
   which adds store-review friction and user hesitation that a narrow footprint avoids.
-- A named, auditable host list is also verifiable: "PromptWarden scans these 7 named AI chat
-  sites" is a sentence anyone can check by reading the manifest. "PromptWarden can run
+- A named, auditable host list is also verifiable: "Wardkeep scans these 7 named AI chat
+  sites" is a sentence anyone can check by reading the manifest. "Wardkeep can run
   anywhere" is not.
 
 So the 7-host list stays the **required, install-time** default. Coverage beyond it is
@@ -71,7 +71,7 @@ individual user) making an explicit, revocable grant — never a store re-submis
   click handler (the required user gesture), then messages the background service worker to
   re-sync immediately rather than waiting for the `onAdded` listener. The popup also has a
   **"Problem melden"** link that opens a prefilled GitHub issue against
-  `zwaneldmz/promptwarden` carrying only the
+  `zwaneldmz/wardkeep` carrying only the
   extension version and a category-level count summary from `pw-diagnostics` — never
   `navigator.userAgent` (dropped: it identifies the reporter, not the bug, on a public
   tracker), never event data, never a hostname from `pw-events` or `pw-diagnostics`. The URL
@@ -84,20 +84,20 @@ Enterprise policy / Google Admin console, e.g.:
 
 ```json
 {
-  "policy": "{...existing PromptWarden policy JSON...}",
+  "policy": "{...existing Wardkeep policy JSON...}",
   "extraHosts": ["https://internal-chat.example.com/*", "https://llm.example.org/*"]
 }
 ```
 
 **Step 2 — grant the optional host permission.** `extraHosts` names the origins; the
 extension still needs Chrome's permission to inject into them. Two ways to grant it, both
-already-standard Chrome Enterprise / MV3 mechanics (no PromptWarden code required for the
+already-standard Chrome Enterprise / MV3 mechanics (no Wardkeep code required for the
 grant itself):
 
 - **Fleet-wide, no user click (preferred for a pilot):** the admin adds the extension's
   `optional_host_permissions` origins to
   [`ExtensionSettings`](https://chromeenterprise.google/policies/#ExtensionSettings)'s
-  `runtime_allowed_hosts` for the PromptWarden extension ID, via Google Admin console or
+  `runtime_allowed_hosts` for the Wardkeep extension ID, via Google Admin console or
   Group Policy. This pre-grants the optional host permission fleet-wide — end users never
   see a permission prompt.
 - **Per-user, one-click (standalone / self-serve pilots):** the popup's **"Enable extended
@@ -247,7 +247,7 @@ applies no minimum-cell-size suppression, so a single device's export can and do
 cells of size 1 (e.g. one `credit_card` block on one host on one day) — that is a per-event
 disclosure for that device, not an anonymized statistic. K-anonymity, if you need it for a
 report leaving this device, requires merging multiple devices' exports and suppressing or
-bucketing any resulting cell below your chosen k **before** sharing further; PromptWarden does
+bucketing any resulting cell below your chosen k **before** sharing further; Wardkeep does
 not do that merge or suppression itself.
 
 ## Status summary
@@ -256,9 +256,9 @@ not do that merge or suppression itself.
 |---|---|
 | `optional_permissions` / `optional_host_permissions` in manifest | Shipped |
 | `extraHosts` field in managed schema | Shipped (declaration only) |
-| Fleet-wide grant via `ExtensionSettings.runtime_allowed_hosts` | Standard Chrome Enterprise mechanic, no PromptWarden code needed, usable today once an admin has the extension ID |
+| Fleet-wide grant via `ExtensionSettings.runtime_allowed_hosts` | Standard Chrome Enterprise mechanic, no Wardkeep code needed, usable today once an admin has the extension ID |
 | Popup "Enable extended coverage" one-click grant button | **Shipped** (`apps/extension/popup.js` / `popup.html`) |
-| Popup "Problem melden" prefilled GitHub issue link | **Shipped** — targets `zwaneldmz/promptwarden` |
+| Popup "Problem melden" prefilled GitHub issue link | **Shipped** — targets `zwaneldmz/wardkeep` |
 | Background-side `chrome.scripting.registerContentScripts` sync | **Shipped** (`apps/extension/src/background.ts`, `syncExtraHostCoverage`) |
 | Scanning (content script *injects*) on a granted `extraHosts` origin outside the default 7 | **Possible now** — declare + grant, nothing else required for injection |
 | Enforcement (policy rules actually *apply*) on that same origin | **Requires one more manual step** — the origin must also be added to `policy.hosts`, by hand, or `hostMatches()` silently no-ops there. See "The other half" above |

@@ -47,7 +47,7 @@ async function withStateHome(prefix, fn) {
 }
 
 function eventsPath(stateHome) {
-  return join(stateHome, "promptwarden", "events.jsonl");
+  return join(stateHome, "wardkeep", "events.jsonl");
 }
 
 test("recordEvent appends one JSONL line, file mode 0600, creating dirs as needed", async () => {
@@ -101,7 +101,7 @@ test("recordEvent never throws even when the state directory cannot be created",
 test("cap: appending past 500 records drops the oldest and keeps exactly 500", async () => {
   await withStateHome("pw-events-cap-", async (stateHome) => {
     const filePath = eventsPath(stateHome);
-    await mkdir(join(stateHome, "promptwarden"), { recursive: true });
+    await mkdir(join(stateHome, "wardkeep"), { recursive: true });
     const now = new Date().toISOString();
     const seeded = Array.from({ length: 500 }, (_, i) =>
       JSON.stringify({ ts: now, host: "seed", policy: `seed-${i}`, categories: ["credit_card"], actions: ["warn"] }),
@@ -123,7 +123,7 @@ test("cap: appending past 500 records drops the oldest and keeps exactly 500", a
 test("age pruning: an entry older than retentionDays is dropped, a recent one is kept", async () => {
   await withStateHome("pw-events-age-", async (stateHome) => {
     const filePath = eventsPath(stateHome);
-    await mkdir(join(stateHome, "promptwarden"), { recursive: true });
+    await mkdir(join(stateHome, "wardkeep"), { recursive: true });
     const dayMs = 24 * 60 * 60 * 1000;
     const old = new Date(Date.now() - 200 * dayMs).toISOString(); // older than the 90-day default
     const recent = new Date(Date.now() - 1 * dayMs).toISOString();
@@ -150,7 +150,7 @@ test("age pruning: an entry older than retentionDays is dropped, a recent one is
 test("policy.retentionDays overrides the default 90-day window", async () => {
   await withStateHome("pw-events-retention-override-", async (stateHome) => {
     const filePath = eventsPath(stateHome);
-    await mkdir(join(stateHome, "promptwarden"), { recursive: true });
+    await mkdir(join(stateHome, "wardkeep"), { recursive: true });
     const dayMs = 24 * 60 * 60 * 1000;
     const tenDaysAgo = new Date(Date.now() - 10 * dayMs).toISOString();
     const seeded =

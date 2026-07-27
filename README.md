@@ -1,6 +1,9 @@
-# PromptWarden
+# Wardkeep
 
-Local guardrails for AI tools. PromptWarden warns, redacts, or blocks
+*Formerly PromptWarden — renamed July 2026 to avoid collisions with
+similarly-named projects.*
+
+Local guardrails for AI tools. Wardkeep warns, redacts, or blocks
 sensitive data — credit cards, IBANs, private keys, JWTs, API keys,
 connection strings, social insurance numbers, and bulk PII patterns — before
 it reaches ChatGPT, Claude, Gemini, Copilot, or any other AI surface. File
@@ -13,11 +16,11 @@ the device.
 | Surface | What it covers | How it works |
 |---|---|---|
 | **Chrome extension** | Typed prompts, pastes, send-button clicks, file uploads/drops on AI chat sites | MV3 content script, capture-phase interception, no site-specific selectors |
-| **CLI** (`promptwarden scan`) | Piped text, files, heredocs — `cat data.csv \| promptwarden scan --stdin` | Same policy engine, same detectors, exit codes for CI |
-| **Claude Code hook** (`promptwarden hook claude-code`) | Human prompts (`UserPromptSubmit`) and every tool argument (`PreToolUse`) | Stdin/stdout hook protocol; `redact` rewrites tool args via `updatedInput` |
-| **MCP gateway** (`promptwarden mcp -- <server>`) | Tool arguments *and* tool results on any stdio MCP server | Transparent JSON-RPC proxy; reaches Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, JetBrains |
+| **CLI** (`wardkeep scan`) | Piped text, files, heredocs — `cat data.csv \| wardkeep scan --stdin` | Same policy engine, same detectors, exit codes for CI |
+| **Claude Code hook** (`wardkeep hook claude-code`) | Human prompts (`UserPromptSubmit`) and every tool argument (`PreToolUse`) | Stdin/stdout hook protocol; `redact` rewrites tool args via `updatedInput` |
+| **MCP gateway** (`wardkeep mcp -- <server>`) | Tool arguments *and* tool results on any stdio MCP server | Transparent JSON-RPC proxy; reaches Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, JetBrains |
 | **VS Code extension** | Files open in the editor | Diagnostics in the Problems panel; does **not** intercept Copilot/Cursor completions |
-| **Path exclusions** (`promptwarden emit-exclusions`) | Vendor exclusion files for Cursor, GitHub Copilot, `.aiignore` | Renders the file; enforcement is on the vendor's side |
+| **Path exclusions** (`wardkeep emit-exclusions`) | Vendor exclusion files for Cursor, GitHub Copilot, `.aiignore` | Renders the file; enforcement is on the vendor's side |
 
 ## How it works
 
@@ -80,7 +83,7 @@ npm run build:cli
 node apps/cli/dist/cli.js scan --stdin
 # Or link it:
 npm link
-promptwarden scan --stdin
+wardkeep scan --stdin
 ```
 
 ### Claude Code hook
@@ -91,10 +94,10 @@ Add to your Claude Code settings (`~/.claude/settings.json`):
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "command": "promptwarden hook claude-code" }
+      { "command": "wardkeep hook claude-code" }
     ],
     "PreToolUse": [
-      { "command": "promptwarden hook claude-code" }
+      { "command": "wardkeep hook claude-code" }
     ]
   }
 }
@@ -111,7 +114,7 @@ Wrap any MCP server's command with the gateway:
 {
   "mcpServers": {
     "my-server": {
-      "command": "promptwarden",
+      "command": "wardkeep",
       "args": ["mcp", "--", "actual-server-binary", "--flag"]
     }
   }
@@ -175,9 +178,9 @@ on which hosts. Example:
 **Browser:** managed storage (admin-pushed) > local storage > built-in
 default.
 
-**CLI:** `/etc/promptwarden/policy.json` (root-owned) >
-`$PROMPTWARDEN_POLICY` (path) > `$XDG_CONFIG_HOME/promptwarden/policy.json`
-\> repo-local `.promptwarden.json` (strictness-monotonic only — can raise
+**CLI:** `/etc/wardkeep/policy.json` (root-owned) >
+`$WARDKEEP_POLICY` (path) > `$XDG_CONFIG_HOME/wardkeep/policy.json`
+\> repo-local `.wardkeep.json` (strictness-monotonic only — can raise
 actions, never lower) > built-in default.
 
 See the [profiles/](profiles/) directory for complete examples.
@@ -204,7 +207,7 @@ Default: ChatGPT, Claude, Gemini, Copilot, Mistral, Perplexity. Extensible
 via `extraHosts` in managed storage for admin-declared internal AI tools.
 See [docs/HOST_COVERAGE.md](docs/HOST_COVERAGE.md).
 
-## What PromptWarden does NOT cover
+## What Wardkeep does NOT cover
 
 - Direct API calls (curl, SDKs) — no interception point exists
 - IDE inline completions (Copilot, Cursor Tab) — closed-process payload
@@ -218,7 +221,7 @@ See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for the full boundary.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The "PromptWarden"
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The "Wardkeep"
 name is governed separately — see [TRADEMARKS.md](TRADEMARKS.md).
 
 ## Security

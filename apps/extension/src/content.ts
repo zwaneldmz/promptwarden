@@ -1,5 +1,5 @@
 /**
- * PromptWarden content script.
+ * Wardkeep content script.
  *
  * Selector-less by design: AI sites change their DOM weekly, so nothing here
  * depends on site-specific CSS selectors. Instead it intercepts the generic
@@ -15,7 +15,7 @@
  * The only thing that leaves this script is the output of `toLogRecord`,
  * the single privacy gate for all logging.
  */
-import { evaluate, parsePolicy, hostMatches, Policy, EvaluationResult, toLogRecord } from "@promptwarden/policy-engine";
+import { evaluate, parsePolicy, hostMatches, Policy, EvaluationResult, toLogRecord } from "@wardkeep/policy-engine";
 import { FALLBACK_POLICY } from "./default-policy.js";
 import { FileScan, isScannableFile, scanFiles } from "./file-scan.js";
 import {
@@ -704,7 +704,7 @@ function categoriesOf(result: EvaluationResult): string {
  * `document.getElementById` or a `#id`/class selector — because a fixed,
  * guessable id is exactly what let a page find and control the old dialog:
  *   - `host.id` is a per-load `crypto.randomUUID()`, not a constant, so a
- *     page cannot target it by id in CSS (`#promptwarden-guardrail{display:
+ *     page cannot target it by id in CSS (`#wardkeep-guardrail{display:
  *     none!important}`) or in a `MutationObserver`/`querySelector` lookup —
  *     even one hardcoded from old source or docs misses on every load;
  *   - the shadow root's mode is "closed", so `guardrailHost.shadowRoot` is
@@ -766,7 +766,7 @@ function showGuardrail(opts: {
 
   const box = document.createElement("div");
   box.setAttribute("role", "alertdialog");
-  box.setAttribute("aria-label", "PromptWarden");
+  box.setAttribute("aria-label", "Wardkeep");
   box.style.cssText =
     "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:2147483647;" +
     "max-width:520px;background:#101418;color:#e8edf2;border:1px solid #2c3540;" +

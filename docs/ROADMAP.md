@@ -1,6 +1,6 @@
 # Roadmap
 
-Scope: what to fix before anyone deploys this to a fleet, and how PromptWarden's policy engine
+Scope: what to fix before anyone deploys this to a fleet, and how Wardkeep's policy engine
 reaches surfaces outside the browser. Ground rules in
 [ENGINEERING_PLAN.md](ENGINEERING_PLAN.md) are binding; where an item here would bend one, it
 says so explicitly instead of quietly taking an exception.
@@ -47,11 +47,11 @@ omitted deliberately — they rot; the named symbol is the anchor.
 
 4. **The guardrail UI lives in the page's own DOM under a fixed, well-known id, and the page
    controls it.** Three consequences from one root cause: `document.body.id =
-   "promptwarden-guardrail"` makes the capture-phase click listener's self-exemption
+   "wardkeep-guardrail"` makes the capture-phase click listener's self-exemption
    (`target.closest("#" + UI_ID)`) match every click, disabling the whole send-button path
    with no user action; a page `MutationObserver` can find the dialog by id and `.click()`
    "Send anyway"/"Upload anyway" (button handlers have no `isTrusted` gate) to self-approve
-   the exact bypass the dialog exists to gate; and `#promptwarden-guardrail{display:none
+   the exact bypass the dialog exists to gate; and `#wardkeep-guardrail{display:none
    !important}` hides it. Fix: closed `ShadowRoot` on a host whose id is a per-load
    `crypto.randomUUID()`, keep a module-level reference, replace the id lookup with an
    identity check over `event.composedPath()`, gate `onPick` on `e.isTrusted`, and add a smoke
@@ -297,12 +297,12 @@ omitted deliberately — they rot; the named symbol is the anchor.
 24. **The npm workspace does not exist.** The root `package.json` declares
     `workspaces: ["packages/*", "apps/*"]` but neither `packages/policy-engine` nor
     `apps/extension` has a `package.json`; `npm ls --workspaces` reports "No workspaces
-    found!" and the lockfile has zero link entries. `@promptwarden/policy-engine` resolves only
+    found!" and the lockfile has zero link entries. `@wardkeep/policy-engine` resolves only
     through esbuild `--alias` (runtime) and tsconfig `paths` (typecheck) — no Node process can
     import it. Consequence: with no `package.json`, `module: NodeNext` makes `tsc` emit
     **CommonJS** while `dist/src/index.d.ts` declares ESM. Fix before any CLI code exists: add
     the member manifests with `"type": "module"`, and rename the root to
-    `promptwarden-monorepo` so `promptwarden` is free for the published CLI. Test imports are
+    `wardkeep-monorepo` so `wardkeep` is free for the published CLI. Test imports are
     all extensionful relative paths, so the flip to ESM is safe for `node --test`.
     `package.json`, `packages/policy-engine/package.json` — **30m**
 
@@ -340,24 +340,24 @@ Three consequences follow, and they are the whole design:
 
 ### Package shape
 
-One publishable, zero-dependency package `promptwarden` (`"type": "module"`,
-`bin: { promptwarden: "dist/cli.js" }`), engine pre-bundled by the same esbuild `--alias`
+One publishable, zero-dependency package `wardkeep` (`"type": "module"`,
+`bin: { wardkeep: "dist/cli.js" }`), engine pre-bundled by the same esbuild `--alias`
 trick the extension already uses. Three **subcommands**, not three bins — `npx` only
 auto-resolves the bin matching the package name:
 
 ```
-promptwarden scan  [--stdin|--file <p>…|--json]   exit 0 clean / 1 blocked / 2 warn+--strict / 3 config
-promptwarden hook  claude-code                    hook JSON envelope on stdin, decision on stdout
-promptwarden mcp   -- <real server cmd>           stdio JSON-RPC gateway (later)
+wardkeep scan  [--stdin|--file <p>…|--json]   exit 0 clean / 1 blocked / 2 warn+--strict / 3 config
+wardkeep hook  claude-code                    hook JSON envelope on stdin, decision on stdout
+wardkeep mcp   -- <real server cmd>           stdio JSON-RPC gateway (later)
 ```
 
-Publishing `@promptwarden/policy-engine` separately is deferred until someone asks for the
+Publishing `@wardkeep/policy-engine` separately is deferred until someone asks for the
 library; dual-publish lockstep is real cost for no current consumer.
 
-Policy discovery **inverts** the naive "nearest file wins": a `.promptwarden.json` inside an
+Policy discovery **inverts** the naive "nearest file wins": a `.wardkeep.json` inside an
 untrusted `git clone` must not be able to downgrade `credit_card: block` to `allow`.
-Precedence: `/etc/promptwarden/policy.json` (root-owned, the managed-storage analogue, and
-what makes the existing GPO/Intune/Jamf docs extend to the CLI) > `$PROMPTWARDEN_POLICY` as a
+Precedence: `/etc/wardkeep/policy.json` (root-owned, the managed-storage analogue, and
+what makes the existing GPO/Intune/Jamf docs extend to the CLI) > `$WARDKEEP_POLICY` as a
 *path*, never inline JSON (env vars leak via `ps -E` and CI logs) > `$XDG_CONFIG_HOME` >
 repo-local, applied **strictness-monotonic only** (may raise a rule's action using the
 existing `{allow:0 … block:4}` severity map, never lower it, never set `logging:"content"`,
@@ -367,7 +367,7 @@ through the existing `parsePolicy`.
 `hosts` is browser-only — `hostMatches` returns false for `hosts: []`, so the CLI evaluates
 unconditionally and passes a surface label as `toLogRecord`'s host (`cli:scan`,
 `cli:claude-code`). Document that in `policy.ts` and in `profiles/*.json`. Events append one
-`toLogRecord` line to `${XDG_STATE_HOME:-~/.local/state}/promptwarden/events.jsonl`, mode
+`toLogRecord` line to `${XDG_STATE_HOME:-~/.local/state}/wardkeep/events.jsonl`, mode
 0600, reusing `MAX_BUFFERED = 500` / `DEFAULT_RETENTION_DAYS = 90` and the same
 `isExpired`/`retentionDaysOf` semantics; a single `O_APPEND` write below `PIPE_BUF` is atomic,
 so no lockfile (the extension's `writeQueue` exists only because `chrome.storage` is
@@ -385,9 +385,9 @@ to the scan in the same commit that creates it.
 | Agent SDK: `evaluate()` in your own code before `query()` | Everything, with **all four actions intact** — you own the prompt string, no hook contract constrains you | Nothing the caller doesn't route through it; requires being the SDK host | Low | **Build now** — only surface where `redact` and `warn` survive; best demo of the engine |
 | Claude Code `PreToolUse` hook, no matcher | Every tool argument — Bash `command`, Write/Edit `content`/`new_string`, WebFetch `url`, MCP args, and the **Agent** tool's `prompt` (subagent prompts). Runs before the permission check, so `deny` holds even under `bypassPermissions` | The human's own prompt; per-matcher scoping leaves unlisted tools ungated (hence: no matcher); `mcp__memory` matches nothing — needs `mcp__memory__.*`, and plugin servers are `mcp__plugin_<p>_<s>__<tool>` | Low–med | **Build now** — the actual enforcement layer, and via `updatedInput` the **only** redaction channel in a CLI harness |
 | Claude Code `UserPromptSubmit` hook | The typed/pasted prompt before the model sees it, every turn, every permission mode; enforceable from managed settings and survives a user's `disableAllHooks` | **Cannot rewrite the prompt** — no `updatedPrompt` exists, so `redact` degrades to block/warn and `warn`-then-send has no analogue. Blind to files the agent reads itself, and **fails OPEN on timeout** (30 s; output discarded, prompt still reaches the model) | Low | **Build now** — block/observe only. Keep Office extraction off this event |
-| `promptwarden scan` — argv, pipes, heredocs, `--file` | `claude -p "…"`, `cat customers.csv \| claude`, heredocs (the heredoc *is* stdin), files by path | Everything typed inside an interactive TUI; files the agent reads itself; absolute-path invocation | Low | **Build now** — the CLI's own front door |
-| git pre-commit / required CI check (`git diff --cached \| promptwarden scan --stdin`) | Secrets and PII entering version control under the **same policy document** as the browser | `--no-verify`; history; `--unified=0` diff syntax can split a card across a hunk boundary and defeat Luhn — strip diff markers and test that case | Very low | **Build now** — position as "one policy at commit time", never as a secret scanner |
-| MCP stdio gateway (`promptwarden mcp -- <server>`) | Every MCP tool argument **and every tool result** — the inbound direction nothing else covers, and precisely what `bulk_pii` was built for. Reaches Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, JetBrains through one config-file edit | Only the MCP channel. HTTP/SSE-transport servers out of v1 scope by design | Med (~300 lines) | **Build later — best next adapter after the CLI.** Needs one reviewed `child_process.spawn` carve-out in the no-egress gate |
+| `wardkeep scan` — argv, pipes, heredocs, `--file` | `claude -p "…"`, `cat customers.csv \| claude`, heredocs (the heredoc *is* stdin), files by path | Everything typed inside an interactive TUI; files the agent reads itself; absolute-path invocation | Low | **Build now** — the CLI's own front door |
+| git pre-commit / required CI check (`git diff --cached \| wardkeep scan --stdin`) | Secrets and PII entering version control under the **same policy document** as the browser | `--no-verify`; history; `--unified=0` diff syntax can split a card across a hunk boundary and defeat Luhn — strip diff markers and test that case | Very low | **Build now** — position as "one policy at commit time", never as a secret scanner |
+| MCP stdio gateway (`wardkeep mcp -- <server>`) | Every MCP tool argument **and every tool result** — the inbound direction nothing else covers, and precisely what `bulk_pii` was built for. Reaches Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, JetBrains through one config-file edit | Only the MCP channel. HTTP/SSE-transport servers out of v1 scope by design | Med (~300 lines) | **Build later — best next adapter after the CLI.** Needs one reviewed `child_process.spawn` carve-out in the no-egress gate |
 | Cowork plugin (repackage the hook as `hooks/hooks.json`) | Org-**required** plugin install that users cannot remove — the real analogue of managed storage, aimed at the non-developer users likeliest to paste a customer list | Which events fire and whether the stdin/exit-code contract matches the CLI is **unverified** — there is no Cowork hooks reference page | Low incremental | **Later** — do not claim support until a canary prompt with a synthetic Luhn-valid card proves the gate is live |
 | Codex CLI hooks (`UserPromptSubmit`, `PreToolUse` + `updatedInput`) | Same two gates as Claude Code, including redaction via `updatedInput` | Hosted/server-side tools (e.g. WebSearch) are invisible. Sources disagree on whether hooks are on by default and whether `PreToolUse` covers only Bash or also `apply_patch`/MCP — if the Bash-only variant is installed, file writes sail past | Med | **Later, provisional** — gate behind a version check plus a canary |
 | PATH shim wrapper binary | argv + non-TTY stdin for any CLI, no hook API needed | Interactive TUI input entirely (once the child owns the tty, bytes never enter the wrapper's address space); absolute-path/alias/`env -i` invocation | Low (~80 lines) | **Later** — needs an `isTTY` check plus a read deadline (a shim draining an inherited never-closed pipe hangs) and an absolute interpreter shebang |
@@ -423,7 +423,7 @@ to the scan in the same commit that creates it.
 | PDF, legacy `.doc`/`.xls` uploads | **No** — documented gap | Unscheduled |
 | Internal AI tools beyond the 7 hosts | Managed `extraHosts` + optional permission grant, no retroactive injection into open tabs | §1.19 |
 | Firefox | **No port** | Unscheduled |
-| `claude -p "…"`, pipes, heredocs | No | `promptwarden scan` |
+| `claude -p "…"`, pipes, heredocs | No | `wardkeep scan` |
 | Typed prompt in Claude Code / Codex CLI | No | `UserPromptSubmit` hook — block/observe only, no redaction, fails open on timeout |
 | Tool arguments: Bash, Write/Edit, WebFetch, MCP calls | No | `PreToolUse` hook with `updatedInput` — the only redaction channel |
 | Subagent prompts | No | `PreToolUse` on the Agent tool (hooks also fire inside subagents) |
@@ -432,12 +432,12 @@ to the scan in the same commit that creates it.
 | Data typed inside an interactive TUI | No | Structurally out of reach for shell-layer mechanisms; pastes only, via a PTY proxy we are not building |
 | Secrets entering git | No | pre-commit + required CI check on the diff |
 | Direct API calls from scripts (`curl`, Python/Node SDKs) | No — `THREAT_MODEL.md` already says visibility is zero | Opt-in SDK wrapper at best. Mandatory coverage needs a MITM proxy or root-level TLS hooking; both are rejected |
-| IDE inline completions (Copilot, Cursor Tab, JetBrains AI) | No | **Architecturally out of reach** for a local OSS tool — the payload is assembled inside a closed process and sent over its own connection. The only levers are vendor-side and *path*-based: GitHub content exclusions (server-enforced, and per GitHub's own docs **not** applied to Copilot CLI, the cloud agent, or Chat Agent mode) and `.cursorignore` (best-effort by Cursor's own description). `.copilotignore` is a community convention, not an enforced feature. At most, a `promptwarden emit-exclusions` renderer |
+| IDE inline completions (Copilot, Cursor Tab, JetBrains AI) | No | **Architecturally out of reach** for a local OSS tool — the payload is assembled inside a closed process and sent over its own connection. The only levers are vendor-side and *path*-based: GitHub content exclusions (server-enforced, and per GitHub's own docs **not** applied to Copilot CLI, the cloud agent, or Chat Agent mode) and `.cursorignore` (best-effort by Cursor's own description). `.copilotignore` is a community convention, not an enforced feature. At most, a `wardkeep emit-exclusions` renderer |
 | Desktop apps (Claude Desktop, ChatGPT app) | No | Out of reach — patching an app bundle breaks signature, notarization and every auto-update. The app is unreachable; **its MCP config file is not**, which is the gateway's seam |
 | Hosted/server-side tools (e.g. Codex WebSearch) | No | Out of reach — executed on the provider's side, no hook fires |
 
 Everything outside the browser is client-side and locally editable. The only enforcement floors
-are managed storage (browser) and a root-owned `/etc/promptwarden/policy.json` plus managed
+are managed storage (browser) and a root-owned `/etc/wardkeep/policy.json` plus managed
 settings (CLI); a user can still call a binary by absolute path, pass `--no-verify`, or open a
 different shell. The existing threat-model framing — catch the default, unthinking path, not
 survive a user actively trying to exfiltrate — transfers verbatim and should be restated in
@@ -477,7 +477,76 @@ any CLI or terminal-layer doc.
 - **Positioning the pre-commit hook as a secret scanner** — five structured patterns against
   gitleaks' hundreds, bypassable with `--no-verify`, and blind to history. The differentiated
   claim is *one policy applied at commit time*.
-- **Publishing `@promptwarden/policy-engine` as a separate package** — dual-publish version
+- **Publishing `@wardkeep/policy-engine` as a separate package** — dual-publish version
   lockstep for no current consumer. Revisit on the first real library request.
 - **Patching desktop app bundles** — breaks code signing and notarization, and would make this
   project something EDR flags.
+
+---
+
+## 5. Adopted from the field (competitive review, 2026-07-27)
+
+A review of lohith80/promptwarden (a FastAPI reverse proxy in the same problem space,
+unrelated to this project's former name) surfaced three ideas worth taking. Each is
+scoped against the ground rules and the OSS/enterprise boundary before any code exists.
+
+### 5.1 Canary tokens — OSS, engine + adapters
+
+An admin plants an opaque token (`wk-canary-<hex>`) in a system prompt, `CLAUDE.md`,
+or an internal document. That token appearing in any scanned traffic is deterministic
+evidence of leakage — zero false-positive rate by construction, because the operator
+invented the string.
+
+- **Engine:** new policy field `canaries: string[]` (exact substrings, not regex — no
+  ReDoS surface, no anchoring bugs) and a synthetic `canary` detector id. Match =
+  severity equivalent to `block` unless the policy's `canary` rule says otherwise.
+  `toLogRecord` masks the token the way it caps `match` today; `toUserMessage` never
+  echoes it — a canary in a block reason would republish the tripwire.
+- **Where it bites hardest:** the MCP gateway's inbound direction (tool results — the
+  channel nothing else covers) and `PreToolUse` arguments (an agent trying to write the
+  token out). The browser surface gets it for free via the shared engine.
+- **Ground-rule fit:** pure string scan, no deps, deterministic, both privacy gates
+  already in place. The bench gate is safe — exact substring search over a short list.
+- **Effort:** ~0.5d engine + tests, ~0.5d docs (planting guide, rotation, what a hit
+  means operationally).
+
+### 5.2 OCSF event export — split across the boundary
+
+Their OCSF Detection Finding (class 2004) events with Splunk/Sentinel content is the
+right interchange shape for SOC consumers. Split per the boundary rule:
+
+- **OSS half:** a pure formatter — `wardkeep events export --format ocsf` (and
+  `--format jsonl`, the current shape) reading the existing local event log and
+  writing OCSF class 2004 JSON to stdout or a file. No network, no new deps, no new
+  logging surface — it renders records that already passed `toLogRecord`. The popup's
+  existing aggregate export stays as-is. **Effort: ~1d** including a golden-file test
+  asserting no `match` content survives into OCSF `evidence` fields.
+- **Enterprise half (other repo):** anything that *ships* events off the device —
+  Splunk HEC forwarder, Sentinel connector, dashboards (savedsearches.conf / KQL),
+  and multi-device aggregation in `pwreport`. Egress belongs where a fleet admin
+  consciously deploys it, never in this repo. Their sync-HEC-stalls-the-event-loop
+  defect is the cautionary tale: the forwarder must be a separate process reading the
+  exported file, not a hook in the scan path.
+
+### 5.3 OWASP LLM Top 10 (2025) + MITRE ATLAS mapping — OSS docs + export metadata
+
+A static mapping from each detector and leak path to OWASP LLM Top 10 (2025) entries
+(e.g. LLM02 Sensitive Information Disclosure) and MITRE ATLAS techniques. Two uses:
+
+- **Docs:** one table in `THREAT_MODEL.md` — free credibility with compliance
+  reviewers, and it forces precision about which risks this tool actually addresses
+  (most of the Top 10 it deliberately does not — say so in the same table).
+- **Export metadata:** the OCSF formatter (5.2) embeds the mapped ids per finding, so
+  a SOC's existing OWASP-keyed dashboards light up without custom parsing.
+- **Effort:** 2–4h docs; the export ids ride along with 5.2.
+
+**Not adopted, and why:** their injection/jailbreak heuristics gate what reaches the
+model — a different product with a different FP budget; a blocking guardrail for
+*outbound* data must not inherit inbound-prompt heuristics. Entropy-based secret
+detection stays rejected for the inline path (§4) — they cap theirs at flag-only for
+the same reason. Whole-message withholding instead of redaction is their answer to
+parser-differential risk on a proxy; our surfaces own the input box or the tool-call
+envelope, so surgical redaction remains correct here.
+
+Build order: 5.3 docs table first (cheapest, sharpens the threat model), then 5.1
+canaries, then 5.2 OCSF export. None of the three blocks on the others.

@@ -8,7 +8,7 @@
  *      send button before a plain activeEditable() check would catch it)
  *   3. paste         (paste path)
  *   4. click-to-send with document.body.id set to the guardrail's OLD fixed
- *      id ("promptwarden-guardrail") beforehand — regression for
+ *      id ("wardkeep-guardrail") beforehand — regression for
  *      ROADMAP.md §1.2 item 4: the click listener's self-exemption used to
  *      be `target.closest("#" + UI_ID)`, and closest() walks up through
  *      ancestors including <body>, so a page setting *body's* id to that
@@ -178,7 +178,7 @@ async function checkPaste(ctx, page) {
 /** Regression for ROADMAP.md §1.2 item 4 — see file header. */
 async function checkBodyIdClobber(ctx, page) {
   await page.evaluate(() => {
-    document.body.id = "promptwarden-guardrail";
+    document.body.id = "wardkeep-guardrail";
   });
   const ed = await editor(page);
   await ed.click();

@@ -1,4 +1,4 @@
-# Releasing PromptWarden
+# Releasing Wardkeep
 
 **Note:** `.github/workflows/release.yml` has never been exercised by an actual tag push — GitHub
 Actions cannot run in the environment that authored it. Every step was validated the ways it could
@@ -66,9 +66,9 @@ On a `v*` tag push (or a manual `workflow_dispatch` re-run against an existing t
 3. **Packages the extension** as a zip containing only what the extension needs to run —
    `manifest.json`, the two built bundles (`background.js`, `content.bundle.js`), `popup.html`,
    `popup.js`, `managed_schema.json`, and `icons/` — never `src/`, `tsconfig.json`, or
-   `node_modules`. Named `promptwarden-extension-vX.Y.Z.zip`.
+   `node_modules`. Named `wardkeep-extension-vX.Y.Z.zip`.
 4. **Packs the CLI** with a plain `npm pack` inside `apps/cli` (its `package.json` already scopes
-   `"files"` to `dist/` only). Named `promptwarden-X.Y.Z.tgz`.
+   `"files"` to `dist/` only). Named `wardkeep-X.Y.Z.tgz`.
 5. **Writes `SHA256SUMS`** — the SHA-256 of both artifacts above, one line each, in the standard
    `sha256sum`/`shasum -c`-compatible format.
 6. **Signs `SHA256SUMS` with cosign, keylessly** — no private key is generated, stored, or
@@ -114,7 +114,7 @@ Download `SHA256SUMS.sig` and `SHA256SUMS.pem` too, then:
 
 ```bash
 cosign verify-blob \
-  --certificate-identity "https://github.com/zwaneldmz/promptwarden/.github/workflows/release.yml@refs/tags/v0.2.0" \
+  --certificate-identity "https://github.com/zwaneldmz/wardkeep/.github/workflows/release.yml@refs/tags/v0.2.0" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   --certificate SHA256SUMS.pem \
   --signature SHA256SUMS.sig \
@@ -131,7 +131,7 @@ by hand each time, use a regexp instead:
 
 ```bash
 cosign verify-blob \
-  --certificate-identity-regexp '^https://github\.com/zwaneldmz/promptwarden/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+  --certificate-identity-regexp '^https://github\.com/zwaneldmz/wardkeep/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   --certificate SHA256SUMS.pem \
   --signature SHA256SUMS.sig \
@@ -148,15 +148,15 @@ specific workflow run on a specific commit, not just that *some* Sigstore-issued
 signed them:
 
 ```bash
-gh attestation verify promptwarden-extension-v0.2.0.zip -R zwaneldmz/promptwarden
-gh attestation verify promptwarden-0.2.0.tgz -R zwaneldmz/promptwarden
+gh attestation verify wardkeep-extension-v0.2.0.zip -R zwaneldmz/wardkeep
+gh attestation verify wardkeep-0.2.0.tgz -R zwaneldmz/wardkeep
 ```
 
 Requires a `gh` CLI recent enough to have the `attestation` subcommand.
 
 ## Chrome Web Store re-signing — a verified zip is not the same artifact the store ships
 
-**`promptwarden-extension-vX.Y.Z.zip`, even fully verified by every step above, is not what a user
+**`wardkeep-extension-vX.Y.Z.zip`, even fully verified by every step above, is not what a user
 installs from the Chrome Web Store or Edge Add-ons, and never will be, by construction.** The zip
 this workflow produces is *packing input* — the exact runtime files, unsigned, meant for
 self-hosted CRX packing (`docs/DEPLOY_SELF_HOSTED_CRX.md`) or for a security-conscious user who
@@ -172,7 +172,7 @@ means:
   Add-ons build's extension ID are **three different IDs** for the same source code (see
   `docs/DEPLOY_SELF_HOSTED_CRX.md`'s warning section for the operational consequences of that —
   managed policy is keyed per-ID, so it matters which one a fleet is actually running).
-- Verifying this zip's signature tells you the *source PromptWarden published* is authentic. It
+- Verifying this zip's signature tells you the *source Wardkeep published* is authentic. It
   tells you nothing about the bytes the Chrome Web Store actually served to a given user on a
   given day — that step is entirely Google's/Microsoft's trust chain, not this project's. If you
   need cryptographic assurance over what a fleet is actually running, deploy the self-hosted CRX
@@ -222,14 +222,14 @@ If a run fails **during** "Create GitHub release" (e.g. the release object was c
 asset upload was interrupted): check what actually landed —
 
 ```bash
-gh release view vX.Y.Z -R zwaneldmz/promptwarden
+gh release view vX.Y.Z -R zwaneldmz/wardkeep
 ```
 
-Upload whatever's missing by hand (`gh release upload vX.Y.Z <file> -R zwaneldmz/promptwarden`),
+Upload whatever's missing by hand (`gh release upload vX.Y.Z <file> -R zwaneldmz/wardkeep`),
 or delete the release object without deleting the tag and re-run —
 
 ```bash
-gh release delete vX.Y.Z -R zwaneldmz/promptwarden --cleanup-tag=false
+gh release delete vX.Y.Z -R zwaneldmz/wardkeep --cleanup-tag=false
 ```
 
 — then trigger `workflow_dispatch` with `ref: vX.Y.Z`.

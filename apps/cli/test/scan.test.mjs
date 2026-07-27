@@ -81,7 +81,7 @@ test("scan: blocked input exits 1, under a policy that blocks credit_card", asyn
   const { status, stdout } = runCli(["scan", "--stdin"], {
     input: "card on file: 4532 0151 1283 0366\n",
     cwd,
-    env: { ...env, PROMPTWARDEN_POLICY: policyPath },
+    env: { ...env, WARDKEEP_POLICY: policyPath },
   });
   assert.equal(status, 1);
   assert.match(stdout, /block/i);
@@ -146,11 +146,11 @@ test("scan: --surface labels the recorded event", async () => {
   const { status } = runCli(["scan", "--stdin", "--surface", "cli:custom-surface"], {
     input: "card on file: 4532 0151 1283 0366\n",
     cwd,
-    env: { ...env, PROMPTWARDEN_POLICY: policyPath },
+    env: { ...env, WARDKEEP_POLICY: policyPath },
   });
   assert.equal(status, 0);
 
-  const eventsPath = join(env.XDG_STATE_HOME, "promptwarden", "events.jsonl");
+  const eventsPath = join(env.XDG_STATE_HOME, "wardkeep", "events.jsonl");
   const { readFile } = await import("node:fs/promises");
   const raw = await readFile(eventsPath, "utf8");
   const record = JSON.parse(raw.trim());
@@ -188,7 +188,7 @@ test("scan: --help and unknown-flag both exit 3 with usage on stderr", async () 
   const { cwd, env } = await isolatedEnv("pw-scan-usage");
   const help = runCli(["scan", "--help"], { cwd, env });
   assert.equal(help.status, 3);
-  assert.match(help.stderr, /Usage: promptwarden scan/);
+  assert.match(help.stderr, /Usage: wardkeep scan/);
 
   const unknown = runCli(["scan", "--nonsense"], { cwd, env });
   assert.equal(unknown.status, 3);

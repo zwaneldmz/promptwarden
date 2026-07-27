@@ -537,7 +537,7 @@ function onExport(refs) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "promptwarden-policy.json";
+  a.download = "wardkeep-policy.json";
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -630,7 +630,7 @@ function wireEvents(refs, engine, saveLocal) {
  * Mount the policy editor into `root`.
  *
  * `opts.engine` must expose `parsePolicy` and `evaluate` (the real
- * @promptwarden/policy-engine exports — `DEFAULT_LABELS` is used too, when
+ * @wardkeep/policy-engine exports — `DEFAULT_LABELS` is used too, when
  * present, to populate the rules table's known-detector dropdown so it
  * tracks the engine's actual registry instead of a hand-maintained copy).
  *

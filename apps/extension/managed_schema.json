@@ -2,13 +2,13 @@
   "type": "object",
   "properties": {
     "policy": {
-      "title": "PromptWarden policy document (JSON string)",
-      "description": "A serialized PromptWarden policy. Distributed by the organization via Chrome Enterprise policy / Google Admin console. Takes precedence over any locally configured policy. WARNING: Chrome validates only that this value is a string — it never parses or validates the JSON contents against this schema. A malformed or invalid policy document will pass chrome://policy with no error badge; the extension detects it at load time instead, falls back to its built-in default policy, and surfaces an errored state in its popup and toolbar badge.",
+      "title": "Wardkeep policy document (JSON string)",
+      "description": "A serialized Wardkeep policy. Distributed by the organization via Chrome Enterprise policy / Google Admin console. Takes precedence over any locally configured policy. WARNING: Chrome validates only that this value is a string — it never parses or validates the JSON contents against this schema. A malformed or invalid policy document will pass chrome://policy with no error badge; the extension detects it at load time instead, falls back to its built-in default policy, and surfaces an errored state in its popup and toolbar badge.",
       "type": "string"
     },
     "extraHosts": {
       "title": "Additional origins to scan (beyond the default 7)",
-      "description": "Origin match patterns (e.g. 'https://internal-chat.example.com/*') the admin wants PromptWarden to scan in addition to the built-in default hosts. Listing an origin here does not by itself grant access to it: the extension still needs the 'https://*/*' optional host permission for that origin before it will inject there. See docs/HOST_COVERAGE.md for how that permission is granted (ExtensionSettings runtime_allowed_hosts, or the popup's one-click grant) and for the current implementation status of the background-side registration this field feeds.",
+      "description": "Origin match patterns (e.g. 'https://internal-chat.example.com/*') the admin wants Wardkeep to scan in addition to the built-in default hosts. Listing an origin here does not by itself grant access to it: the extension still needs the 'https://*/*' optional host permission for that origin before it will inject there. See docs/HOST_COVERAGE.md for how that permission is granted (ExtensionSettings runtime_allowed_hosts, or the popup's one-click grant) and for the current implementation status of the background-side registration this field feeds.",
       "type": "array",
       "items": { "type": "string" }
     }

@@ -1,6 +1,6 @@
 # Security Policy
 
-PromptWarden handles sensitive customer data by design — the entire point of
+Wardkeep handles sensitive customer data by design — the entire point of
 the project is to keep that data from leaking. We take reports about the
 project itself leaking, bypassing its own guardrails, or mishandling data
 seriously, and we ask researchers to report privately before disclosing
@@ -67,7 +67,7 @@ bypass, managed-policy tampering, a way to defeat the no-egress guarantee).
 
 We consider security research conducted under this policy to be authorized:
 
-- Good-faith attempts to find and report vulnerabilities in PromptWarden's
+- Good-faith attempts to find and report vulnerabilities in Wardkeep's
   own code, run against your own installation or test environment.
 - We will not pursue legal action against, or report to authorities,
   researchers who make a good-faith effort to comply with this policy —

@@ -10,7 +10,7 @@ import {
   isSafeLocalPolicyFile,
   loadPolicyFrom,
 } from "../dist/policy.js";
-// `@promptwarden/policy-engine` is not a real resolvable package (no
+// `@wardkeep/policy-engine` is not a real resolvable package (no
 // package.json; it only resolves via esbuild's --alias at CLI-build time and
 // tsconfig `paths` at typecheck time — see ROADMAP §1.1 #24). For a plain
 // `node --test` run against a built engine, reach it via the built engine
@@ -62,9 +62,9 @@ test("precedence: etcPath wins over env, xdg, and repo-local all being present",
   await mkdir(cwd, { recursive: true });
   await writeFile(etcPath, JSON.stringify(policyDoc({ name: "from-etc" })));
   await writeFile(envPath, JSON.stringify(policyDoc({ name: "from-env" })));
-  await mkdir(join(xdgHome, "promptwarden"), { recursive: true });
-  await writeFile(join(xdgHome, "promptwarden", "policy.json"), JSON.stringify(policyDoc({ name: "from-xdg" })));
-  await writeFile(join(cwd, ".promptwarden.json"), JSON.stringify(policyDoc({ name: "from-repo-local" })));
+  await mkdir(join(xdgHome, "wardkeep"), { recursive: true });
+  await writeFile(join(xdgHome, "wardkeep", "policy.json"), JSON.stringify(policyDoc({ name: "from-xdg" })));
+  await writeFile(join(cwd, ".wardkeep.json"), JSON.stringify(policyDoc({ name: "from-repo-local" })));
 
   const { policy, source } = await loadPolicyFrom({ etcPath, envPolicyPath: envPath, xdgConfigHome: xdgHome, cwd });
   assert.equal(policy.name, "from-etc");
@@ -79,9 +79,9 @@ test("precedence: envPolicyPath wins over xdg and repo-local when etc is absent"
   const cwd = join(root, "repo");
   await mkdir(cwd, { recursive: true });
   await writeFile(envPath, JSON.stringify(policyDoc({ name: "from-env" })));
-  await mkdir(join(xdgHome, "promptwarden"), { recursive: true });
-  await writeFile(join(xdgHome, "promptwarden", "policy.json"), JSON.stringify(policyDoc({ name: "from-xdg" })));
-  await writeFile(join(cwd, ".promptwarden.json"), JSON.stringify(policyDoc({ name: "from-repo-local" })));
+  await mkdir(join(xdgHome, "wardkeep"), { recursive: true });
+  await writeFile(join(xdgHome, "wardkeep", "policy.json"), JSON.stringify(policyDoc({ name: "from-xdg" })));
+  await writeFile(join(cwd, ".wardkeep.json"), JSON.stringify(policyDoc({ name: "from-repo-local" })));
 
   const { policy, source } = await loadPolicyFrom({ etcPath, envPolicyPath: envPath, xdgConfigHome: xdgHome, cwd });
   assert.equal(policy.name, "from-env");
@@ -94,23 +94,23 @@ test("precedence: xdg wins over repo-local when etc and env are absent", async (
   const xdgHome = join(root, "xdg");
   const cwd = join(root, "repo");
   await mkdir(cwd, { recursive: true });
-  await mkdir(join(xdgHome, "promptwarden"), { recursive: true });
-  await writeFile(join(xdgHome, "promptwarden", "policy.json"), JSON.stringify(policyDoc({ name: "from-xdg" })));
-  await writeFile(join(cwd, ".promptwarden.json"), JSON.stringify(policyDoc({ name: "from-repo-local" })));
+  await mkdir(join(xdgHome, "wardkeep"), { recursive: true });
+  await writeFile(join(xdgHome, "wardkeep", "policy.json"), JSON.stringify(policyDoc({ name: "from-xdg" })));
+  await writeFile(join(cwd, ".wardkeep.json"), JSON.stringify(policyDoc({ name: "from-repo-local" })));
 
   const { policy, source } = await loadPolicyFrom({ etcPath, envPolicyPath: undefined, xdgConfigHome: xdgHome, cwd });
   assert.equal(policy.name, "from-xdg");
-  assert.equal(source, join(xdgHome, "promptwarden", "policy.json"));
+  assert.equal(source, join(xdgHome, "wardkeep", "policy.json"));
 });
 
 test("repo-local is found by walking up from a nested cwd", async () => {
   const root = await tmpDir("pw-policy-walkup-");
   const nested = join(root, "a", "b", "c");
   await mkdir(nested, { recursive: true });
-  await writeFile(join(root, ".promptwarden.json"), JSON.stringify(policyDoc({ name: "root-of-repo" })));
+  await writeFile(join(root, ".wardkeep.json"), JSON.stringify(policyDoc({ name: "root-of-repo" })));
 
   const found = await findRepoLocalPolicyPath(nested);
-  assert.equal(found, join(root, ".promptwarden.json"));
+  assert.equal(found, join(root, ".wardkeep.json"));
 
   const paths = await emptyPaths(nested);
   const { policy, source } = await loadPolicyFrom(paths);
@@ -125,7 +125,7 @@ test("etcPath present but not valid JSON is a hard error (never falls through)",
   const cwd = join(root, "repo");
   await mkdir(cwd, { recursive: true });
   // Even a valid, more-permissive-looking repo-local file must not be reached.
-  await writeFile(join(cwd, ".promptwarden.json"), JSON.stringify(policyDoc({ name: "should-not-be-used" })));
+  await writeFile(join(cwd, ".wardkeep.json"), JSON.stringify(policyDoc({ name: "should-not-be-used" })));
 
   await assert.rejects(
     () => loadPolicyFrom({ etcPath, envPolicyPath: undefined, xdgConfigHome: join(root, "xdg"), cwd }),
@@ -147,17 +147,17 @@ test("envPolicyPath set but the file does not exist is a hard error", async () =
         xdgConfigHome: join(root, "xdg-nope"),
         cwd,
       }),
-    /PROMPTWARDEN_POLICY/,
+    /WARDKEEP_POLICY/,
   );
 });
 
 test("xdg policy present but fails schema validation is a hard error", async () => {
   const root = await tmpDir("pw-policy-xdg-invalid-");
   const xdgHome = join(root, "xdg");
-  await mkdir(join(xdgHome, "promptwarden"), { recursive: true });
+  await mkdir(join(xdgHome, "wardkeep"), { recursive: true });
   // Valid JSON, invalid Policy shape (bad action).
   await writeFile(
-    join(xdgHome, "promptwarden", "policy.json"),
+    join(xdgHome, "wardkeep", "policy.json"),
     JSON.stringify(policyDoc({ rules: [{ detector: "credit_card", action: "nuke" }] })),
   );
   const cwd = join(root, "repo");
@@ -179,7 +179,7 @@ test("repo-local malformed JSON is skipped, not fatal — falls back to the buil
   const root = await tmpDir("pw-policy-repo-malformed-");
   const cwd = join(root, "repo");
   await mkdir(cwd, { recursive: true });
-  await writeFile(join(cwd, ".promptwarden.json"), "{ not json at all");
+  await writeFile(join(cwd, ".wardkeep.json"), "{ not json at all");
 
   const paths = await emptyPaths(cwd);
   const { policy, source } = await loadPolicyFrom(paths);
@@ -193,9 +193,9 @@ test("repo-local symlink is rejected — falls back to the built-in default", as
   await mkdir(cwd, { recursive: true });
   const real = join(root, "real-policy.json");
   await writeFile(real, JSON.stringify(policyDoc({ name: "should-not-be-used", defaultAction: "block" })));
-  await symlink(real, join(cwd, ".promptwarden.json"));
+  await symlink(real, join(cwd, ".wardkeep.json"));
 
-  const safe = await isSafeLocalPolicyFile(join(cwd, ".promptwarden.json"));
+  const safe = await isSafeLocalPolicyFile(join(cwd, ".wardkeep.json"));
   assert.equal(safe, false);
 
   const paths = await emptyPaths(cwd);
@@ -212,7 +212,7 @@ test("repo-local file not owned by the invoking uid is rejected", async (t) => {
   const root = await tmpDir("pw-policy-repo-owner-");
   const cwd = join(root, "repo");
   await mkdir(cwd, { recursive: true });
-  const filePath = join(cwd, ".promptwarden.json");
+  const filePath = join(cwd, ".wardkeep.json");
   await writeFile(filePath, JSON.stringify(policyDoc({ name: "not-mine" })));
 
   const realGetuid = process.getuid;
@@ -254,7 +254,7 @@ test("applyStrictnessMonotonicClamp raises a weakened rule, keeps a stricter one
 
 test("applyStrictnessMonotonicClamp strips exceptions entirely — a repo-local policy cannot introduce or extend them", () => {
   // exceptions is a strictness REDUCTION (ROADMAP §1.4 #17): a repo-local
-  // .promptwarden.json must not be able to suppress a finding the floor
+  // .wardkeep.json must not be able to suppress a finding the floor
   // requires by shipping a broad exception pattern.
   const floor = BUILTIN_DEFAULT_POLICY;
   const candidate = policyDoc({
@@ -274,7 +274,7 @@ test("loadPolicyFrom: a repo-local policy carrying an exception cannot suppress 
   const cwd = join(root, "repo");
   await mkdir(cwd, { recursive: true });
   await writeFile(
-    join(cwd, ".promptwarden.json"),
+    join(cwd, ".wardkeep.json"),
     JSON.stringify(
       policyDoc({
         name: "weak-repo-local-with-exception",
@@ -303,7 +303,7 @@ test("loadPolicyFrom applies the clamp end-to-end to a resolved repo-local polic
   const cwd = join(root, "repo");
   await mkdir(cwd, { recursive: true });
   await writeFile(
-    join(cwd, ".promptwarden.json"),
+    join(cwd, ".wardkeep.json"),
     JSON.stringify(
       policyDoc({
         name: "weak-repo-local",
@@ -316,7 +316,7 @@ test("loadPolicyFrom applies the clamp end-to-end to a resolved repo-local polic
 
   const paths = await emptyPaths(cwd);
   const { policy, source } = await loadPolicyFrom(paths);
-  assert.match(source, /\.promptwarden\.json \(strictness-monotonic clamp applied\)$/);
+  assert.match(source, /\.wardkeep\.json \(strictness-monotonic clamp applied\)$/);
   assert.equal(policy.logging, "event");
   assert.equal(policy.rules.find((r) => r.detector === "credit_card").action, "warn");
 });

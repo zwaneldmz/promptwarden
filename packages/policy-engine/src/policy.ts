@@ -1,5 +1,5 @@
 /**
- * PromptWarden policy schema.
+ * Wardkeep policy schema.
  *
  * A policy is a versioned JSON document distributed to devices (via Chrome
  * managed storage in managed deployments, or a local file in standalone use).
@@ -131,7 +131,7 @@ export interface Policy {
    * by `parsePolicy` (mirrors the same guard already applied to custom
    * `DetectorRule.pattern` values).
    *
-   * SECURITY: a repo-local `.promptwarden.json` (see
+   * SECURITY: a repo-local `.wardkeep.json` (see
    * apps/cli/src/policy.ts's strictness-monotonic clamp) strips
    * `exceptions` entirely before use — an untrusted checkout must not be
    * able to introduce or extend the set of values that silently bypass

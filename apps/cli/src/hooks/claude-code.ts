@@ -1,5 +1,5 @@
 /**
- * Claude Code hook adapter (`promptwarden hook claude-code`).
+ * Claude Code hook adapter (`wardkeep hook claude-code`).
  *
  * Reads a single hook JSON envelope from stdin, dispatches on
  * `hook_event_name`, and writes a decision to stdout as JSON — or nothing at
@@ -21,7 +21,7 @@
  *    rewrite), so `redact` cannot be honoured here. Both `warn` and `redact`
  *    findings get the same treatment: BLOCK by default (a flagged prompt that
  *    is silently let through defeats the point of the hook), configurable
- *    down to allow-with-warning via `PROMPTWARDEN_HOOK_ALLOW_WARN=1` or
+ *    down to allow-with-warning via `WARDKEEP_HOOK_ALLOW_WARN=1` or
  *    `--allow-warn`. A `block`-level finding always blocks regardless of the
  *    flag — that override only ever loosens warn/redact, never a hard block.
  *    Confirmed: this event's command hooks default to a 30s timeout and
@@ -71,7 +71,7 @@ import {
   Policy,
   evaluate,
   toUserMessage,
-} from "@promptwarden/policy-engine";
+} from "@wardkeep/policy-engine";
 import { recordEvent } from "../events.js";
 import { loadPolicy } from "../policy.js";
 
@@ -93,7 +93,7 @@ async function readStdin(): Promise<string> {
 
 /* ---------------------------------- flags ---------------------------------- */
 
-const ALLOW_WARN_ENV = "PROMPTWARDEN_HOOK_ALLOW_WARN";
+const ALLOW_WARN_ENV = "WARDKEEP_HOOK_ALLOW_WARN";
 
 function truthy(value: string | undefined): boolean {
   if (value === undefined) return false;
@@ -184,10 +184,10 @@ async function handleUserPromptSubmit(envelope: HookEnvelope, policy: Policy, ar
 
     if (isAllowWarnEnabled(argv)) {
       writeJson({
-        systemMessage: `PromptWarden: prompt allowed with warning (${summary}). This hook cannot redact a submitted prompt — only block or allow it through.`,
+        systemMessage: `Wardkeep: prompt allowed with warning (${summary}). This hook cannot redact a submitted prompt — only block or allow it through.`,
         hookSpecificOutput: {
           hookEventName: "UserPromptSubmit",
-          additionalContext: `PromptWarden flagged this prompt (${summary}) but allowed it under the configured warn mode. Do not restate or repeat the flagged content.`,
+          additionalContext: `Wardkeep flagged this prompt (${summary}) but allowed it under the configured warn mode. Do not restate or repeat the flagged content.`,
         },
       });
       return;
@@ -195,7 +195,7 @@ async function handleUserPromptSubmit(envelope: HookEnvelope, policy: Policy, ar
 
     writeJson({
       decision: "block",
-      reason: `PromptWarden blocked this prompt (${summary}). This hook cannot redact a submitted prompt, only block or allow it through; set ${ALLOW_WARN_ENV}=1 (or pass --allow-warn) to downgrade warn/redact findings to allow-with-warning.`,
+      reason: `Wardkeep blocked this prompt (${summary}). This hook cannot redact a submitted prompt, only block or allow it through; set ${ALLOW_WARN_ENV}=1 (or pass --allow-warn) to downgrade warn/redact findings to allow-with-warning.`,
     });
     return;
   }
@@ -204,7 +204,7 @@ async function handleUserPromptSubmit(envelope: HookEnvelope, policy: Policy, ar
   await recordEvent(result, policy, "claude-code:UserPromptSubmit");
   writeJson({
     decision: "block",
-    reason: `PromptWarden blocked this prompt (${summary}).`,
+    reason: `Wardkeep blocked this prompt (${summary}).`,
   });
 }
 
@@ -287,7 +287,7 @@ async function handlePreToolUse(envelope: HookEnvelope, policy: Policy): Promise
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: `PromptWarden blocked this tool call (${summary}).`,
+        permissionDecisionReason: `Wardkeep blocked this tool call (${summary}).`,
       },
     });
     return;
@@ -316,7 +316,7 @@ async function handlePreToolUse(envelope: HookEnvelope, policy: Policy): Promise
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        permissionDecisionReason: `PromptWarden redacted this tool call (${summary}).`,
+        permissionDecisionReason: `Wardkeep redacted this tool call (${summary}).`,
         updatedInput,
       },
     });
@@ -329,7 +329,7 @@ async function handlePreToolUse(envelope: HookEnvelope, policy: Policy): Promise
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "allow",
-      permissionDecisionReason: `PromptWarden allowed this tool call with a warning (${summary}).`,
+      permissionDecisionReason: `Wardkeep allowed this tool call with a warning (${summary}).`,
     },
   });
 }
@@ -364,7 +364,7 @@ export async function runClaudeCodeHook(argv: string[]): Promise<number> {
   } catch {
     // Absolute backstop — see module doc. Nothing above should throw once
     // stdin is read and parsed, but a policy-load failure (loadPolicy()
-    // rejects on a present-but-broken /etc or $PROMPTWARDEN_POLICY file) is
+    // rejects on a present-but-broken /etc or $WARDKEEP_POLICY file) is
     // exactly the kind of real-world case this exists for.
     return 0;
   }

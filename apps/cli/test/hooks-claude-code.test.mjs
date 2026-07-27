@@ -56,7 +56,7 @@ async function writePolicy(env, overrides) {
       ...overrides,
     }),
   );
-  return { ...env, PROMPTWARDEN_POLICY: policyPath };
+  return { ...env, WARDKEEP_POLICY: policyPath };
 }
 
 function runHook(envelope, { env, extraArgs = [] } = {}) {
@@ -76,7 +76,7 @@ function assertNoLeak(text, label) {
 }
 
 async function readEvents(xdgStateHome) {
-  const eventsPath = join(xdgStateHome, "promptwarden", "events.jsonl");
+  const eventsPath = join(xdgStateHome, "wardkeep", "events.jsonl");
   try {
     const raw = await readFile(eventsPath, "utf8");
     return raw
@@ -156,12 +156,12 @@ test("UserPromptSubmit: redact-level finding also degrades to BLOCK by default (
   assertNoLeak(stdout, "UserPromptSubmit redact->block stdout");
 });
 
-test("UserPromptSubmit: PROMPTWARDEN_HOOK_ALLOW_WARN=1 downgrades warn to allow-with-warning", async () => {
+test("UserPromptSubmit: WARDKEEP_HOOK_ALLOW_WARN=1 downgrades warn to allow-with-warning", async () => {
   const base = await isolatedEnv("pw-hook-ups-warn-downgrade");
   const env = await writePolicy(base.env, { rules: [{ detector: "credit_card", action: "warn" }] });
   const { status, stdout } = runHook(
     { hook_event_name: "UserPromptSubmit", prompt: `card on file: ${CARD}` },
-    { env: { ...env, PROMPTWARDEN_HOOK_ALLOW_WARN: "1" } },
+    { env: { ...env, WARDKEEP_HOOK_ALLOW_WARN: "1" } },
   );
   assert.equal(status, 0);
   const out = JSON.parse(stdout);
@@ -185,12 +185,12 @@ test("UserPromptSubmit: --allow-warn flag has the same effect as the env var", a
   assert.ok(out.systemMessage);
 });
 
-test("UserPromptSubmit: block-level finding blocks even when PROMPTWARDEN_HOOK_ALLOW_WARN=1 is set", async () => {
+test("UserPromptSubmit: block-level finding blocks even when WARDKEEP_HOOK_ALLOW_WARN=1 is set", async () => {
   const base = await isolatedEnv("pw-hook-ups-block-not-downgradable");
   const env = await writePolicy(base.env, { rules: [{ detector: "credit_card", action: "block" }] });
   const { status, stdout } = runHook(
     { hook_event_name: "UserPromptSubmit", prompt: `card on file: ${CARD}` },
-    { env: { ...env, PROMPTWARDEN_HOOK_ALLOW_WARN: "1" } },
+    { env: { ...env, WARDKEEP_HOOK_ALLOW_WARN: "1" } },
   );
   assert.equal(status, 0);
   const out = JSON.parse(stdout);

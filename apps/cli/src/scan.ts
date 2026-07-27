@@ -1,5 +1,5 @@
 /**
- * `promptwarden scan` — the CLI's own front door. Reads text from --stdin
+ * `wardkeep scan` — the CLI's own front door. Reads text from --stdin
  * and/or one or more --file paths, evaluates it against the resolved
  * policy, records one event, and prints a summary built exclusively from
  * `toUserMessage` (categories/actions only — see packages/policy-engine/src/
@@ -15,11 +15,11 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { EvaluationResult, Finding, Policy, evaluate, scanBytes, toUserMessage } from "@promptwarden/policy-engine";
+import { EvaluationResult, Finding, Policy, evaluate, scanBytes, toUserMessage } from "@wardkeep/policy-engine";
 import { recordEvent } from "./events.js";
 import { loadPolicy } from "./policy.js";
 
-const USAGE = `Usage: promptwarden scan [--stdin] [--file <path>]... [--json] [--strict] [--surface <label>]
+const USAGE = `Usage: wardkeep scan [--stdin] [--file <path>]... [--json] [--strict] [--surface <label>]
 
   --stdin              Read text from standard input.
   --file <path>        Scan a file (repeatable). .xlsx/.docx are text-extracted; anything else is read as plain text.
@@ -48,7 +48,7 @@ function parseScanArgs(argv: string[]): ScanArgs {
     } else if (a === "--file") {
       const value = argv[++i];
       if (value === undefined) {
-        args.error = "promptwarden scan: --file requires a path";
+        args.error = "wardkeep scan: --file requires a path";
         return args;
       }
       args.files.push(value);
@@ -59,7 +59,7 @@ function parseScanArgs(argv: string[]): ScanArgs {
     } else if (a === "--surface") {
       const value = argv[++i];
       if (value === undefined) {
-        args.error = "promptwarden scan: --surface requires a label";
+        args.error = "wardkeep scan: --surface requires a label";
         return args;
       }
       args.surface = value;
@@ -67,7 +67,7 @@ function parseScanArgs(argv: string[]): ScanArgs {
       args.error = ""; // signal "print usage, exit 3" without an error line
       return args;
     } else {
-      args.error = `promptwarden scan: unknown argument "${a}"`;
+      args.error = `wardkeep scan: unknown argument "${a}"`;
       return args;
     }
   }
@@ -154,14 +154,14 @@ export async function runScan(argv: string[]): Promise<number> {
   for (const filePath of args.files) {
     const result = await scanOneFile(filePath, policy, surface);
     if (result === null) {
-      process.stderr.write(`promptwarden scan: could not read or extract text from "${filePath}"\n`);
+      process.stderr.write(`wardkeep scan: could not read or extract text from "${filePath}"\n`);
       return 3;
     }
     perSource.push({ label: filePath, result });
   }
 
   if (perSource.length === 0) {
-    process.stderr.write("promptwarden scan: no input — pass --stdin and/or --file <path>\n");
+    process.stderr.write("wardkeep scan: no input — pass --stdin and/or --file <path>\n");
     process.stderr.write(USAGE);
     return 3;
   }
@@ -202,7 +202,7 @@ export async function runScan(argv: string[]): Promise<number> {
     };
     process.stdout.write(JSON.stringify(out, null, 2) + "\n");
   } else {
-    process.stdout.write(`promptwarden scan — policy: ${policySource}\n`);
+    process.stdout.write(`wardkeep scan — policy: ${policySource}\n`);
     process.stdout.write(message + "\n");
     process.stdout.write(`Result: ${blocked ? "BLOCKED" : needsWarning ? "WARN" : "clean"}\n`);
   }

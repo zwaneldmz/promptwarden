@@ -1,4 +1,4 @@
-# PromptWarden — Architecture & Engineering Ground Rules
+# Wardkeep — Architecture & Engineering Ground Rules
 
 An open-source, browser-first guardrail that warns, redacts, or blocks sensitive data
 (credit cards, IBANs, social-insurance numbers, API keys, bulk PII) before it leaves the

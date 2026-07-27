@@ -9,9 +9,9 @@
  * Reads newline-delimited JSON-RPC from stdin, replies on stdout with
  * canned responses keyed off `method`/`params.name`, and — critically for
  * the tests — echoes every raw line it receives to stderr prefixed with
- * "FAKE-SERVER-RECEIVED:". Because `promptwarden mcp` inherits its child's
+ * "FAKE-SERVER-RECEIVED:". Because `wardkeep mcp` inherits its child's
  * stderr straight through to its own stderr, and the test spawns
- * `promptwarden mcp` itself, that stderr log is the test's window into
+ * `wardkeep mcp` itself, that stderr log is the test's window into
  * "what actually reached the real server" — the thing a blocked call must
  * never appear in.
  *

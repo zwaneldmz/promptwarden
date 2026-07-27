@@ -1,7 +1,7 @@
-# PromptWarden — IDE surfaces
+# Wardkeep — IDE surfaces
 
 What reaches an IDE, what doesn't, and why. Read this before assuming the VS Code extension or
-`promptwarden emit-exclusions` covers more than they do — the honest boundary matters more here
+`wardkeep emit-exclusions` covers more than they do — the honest boundary matters more here
 than anywhere else in this project, because the gap is architectural, not a missing feature.
 
 ## The boundary, stated once, plainly
@@ -22,7 +22,7 @@ what this repo builds for it:
 1. **The files themselves**, once they're open in the editor — this extension can read and
    diagnose them locally, same as any linter.
 2. **The paths a vendor's own tooling is willing to skip**, if that vendor ships an exclusion
-   mechanism — `promptwarden emit-exclusions` renders the file; the vendor decides whether to
+   mechanism — `wardkeep emit-exclusions` renders the file; the vendor decides whether to
    honor it.
 3. **The MCP transport**, when an agent-mode tool call goes over stdio JSON-RPC to a server this
    machine also runs — a real interception point, and the strongest lever available for anything
@@ -34,17 +34,17 @@ what this repo builds for it:
 |---|---|---|---|
 | Inline completions (Copilot, Cursor Tab, JetBrains AI Assistant) | **Nothing.** Not attempted. | — | Closed-process payload, no interception point exists. Path exclusions (below) are the only indirect lever — they act on what the vendor reads, not on what it sends. |
 | AI chat / agent panel inside the editor (Copilot Chat, Cursor Chat, agent tool-use mode rendered in-editor) | **Nothing.** Not attempted. | — | Same closed-process boundary. If the panel dispatches tool calls over MCP, see the "Agent mode / MCP tool calls" row — that's a different channel than the chat UI itself. |
-| Agent mode / MCP tool calls (Claude Code, Cursor agent mode, Copilot agent mode, any client that speaks MCP over stdio) | **MCP stdio gateway** — `promptwarden mcp -- <server command>` | **Local-only, deterministic** — every tool argument and every tool *result* on the wrapped server is scanned against the resolved policy before it crosses the gateway | The strongest IDE-adjacent lever this project has, because MCP is an explicit, machine-readable protocol rather than a closed payload. Config-file reach only (edit the MCP server's `command` to point at the gateway) — nothing to install inside the IDE. See [`docs/MCP_GATEWAY.md`](MCP_GATEWAY.md) for the full mechanism, and `docs/ROADMAP.md` §2's interception-mechanism table for why this is rated ahead of everything else IDE-side. |
-| Files on disk (what an inline-completion/chat/agent feature might read as context, or what a developer opens directly) | **VS Code diagnostics** (`apps/vscode`) *and, independently,* **path exclusions** (`promptwarden emit-exclusions`) | Diagnostics: **local-only** (visible to the human in the Problems panel; does not touch what any AI feature reads or sends). Exclusions: **vendor-enforced, best-effort, or community-convention depending on format** — see the breakdown below. | Two different mechanisms answering two different questions: diagnostics tell *you* what's in a file; exclusions are a hint to a *vendor's tool* about which files to leave alone. Neither one scans, redacts, or blocks anything the way the browser extension or CLI do. |
+| Agent mode / MCP tool calls (Claude Code, Cursor agent mode, Copilot agent mode, any client that speaks MCP over stdio) | **MCP stdio gateway** — `wardkeep mcp -- <server command>` | **Local-only, deterministic** — every tool argument and every tool *result* on the wrapped server is scanned against the resolved policy before it crosses the gateway | The strongest IDE-adjacent lever this project has, because MCP is an explicit, machine-readable protocol rather than a closed payload. Config-file reach only (edit the MCP server's `command` to point at the gateway) — nothing to install inside the IDE. See [`docs/MCP_GATEWAY.md`](MCP_GATEWAY.md) for the full mechanism, and `docs/ROADMAP.md` §2's interception-mechanism table for why this is rated ahead of everything else IDE-side. |
+| Files on disk (what an inline-completion/chat/agent feature might read as context, or what a developer opens directly) | **VS Code diagnostics** (`apps/vscode`) *and, independently,* **path exclusions** (`wardkeep emit-exclusions`) | Diagnostics: **local-only** (visible to the human in the Problems panel; does not touch what any AI feature reads or sends). Exclusions: **vendor-enforced, best-effort, or community-convention depending on format** — see the breakdown below. | Two different mechanisms answering two different questions: diagnostics tell *you* what's in a file; exclusions are a hint to a *vendor's tool* about which files to leave alone. Neither one scans, redacts, or blocks anything the way the browser extension or CLI do. |
 
 ## VS Code diagnostics (`apps/vscode`)
 
-A minimal VS Code extension that runs the same engine (`@promptwarden/policy-engine`) the CLI and
+A minimal VS Code extension that runs the same engine (`@wardkeep/policy-engine`) the CLI and
 browser extension use, over the text of files you open or save, and publishes
 `vscode.Diagnostic` entries in the Problems panel plus a status-bar finding count.
 
 - Triggers: opening a document, saving a document, and the two commands
-  **PromptWarden: Scan Active File** and **PromptWarden: Scan Workspace Selection**.
+  **Wardkeep: Scan Active File** and **Wardkeep: Scan Workspace Selection**.
 - Severity mapping: `block` → Error, `redact`/`warn` → Warning, `observe` → Information.
   (`allow` findings never reach this point — the engine already filters them out.)
 - **Diagnostic messages carry category and action only — `finding.detector` and
@@ -53,7 +53,7 @@ browser extension use, over the text of files you open or save, and publishes
   the message text would defeat the point of flagging it. This mirrors the engine's own
   `toUserMessage` privacy gate (`packages/policy-engine/src/engine.ts`), even though diagnostics
   don't route through that function directly.
-- Policy source: the `promptwarden.policyPath` setting, or the built-in
+- Policy source: the `wardkeep.policyPath` setting, or the built-in
   `vscode-standalone-default` policy if unset — there is no managed-storage or `/etc` discovery
   inside an editor; distribute a path via Settings Sync or a committed `.vscode/settings.json`
   if you need one.
@@ -68,13 +68,13 @@ browser extension use, over the text of files you open or save, and publishes
   which this workstream does not own. The extension has not been launched or run inside VS
   Code as part of this work; only `tsc --noEmit` has verified it.
 
-## Path exclusions (`promptwarden emit-exclusions`)
+## Path exclusions (`wardkeep emit-exclusions`)
 
 ```
-promptwarden emit-exclusions --format cursorignore|copilot-yaml|aiignore [--out <path>]
+wardkeep emit-exclusions --format cursorignore|copilot-yaml|aiignore [--out <path>]
 ```
 
-Renders a vendor-specific exclusion file from the same resolved policy document `promptwarden
+Renders a vendor-specific exclusion file from the same resolved policy document `wardkeep
 scan` uses (see `apps/cli/src/policy.ts`'s discovery precedence) — the patterns included are
 driven by which detectors that policy actually enables (any action other than `allow`), so a
 policy that blocks `api_key` gets the secrets-shaped patterns below, and a policy that leaves
@@ -97,19 +97,19 @@ Every rendered file's header states the source policy's name and repeats, format
 | Format | File | What it feeds | Enforcement strength, per the vendor's own docs |
 |---|---|---|---|
 | `cursorignore` | `.cursorignore` | Cursor's editor | **Best-effort.** Cursor's own description does not guarantee an excluded path is never read or sent to a model. |
-| `copilot-yaml` | Pasted into repo/org Settings → Copilot → Content exclusion (this file is not consumed automatically — `promptwarden` makes no network calls and cannot upload it for you) | GitHub Copilot code completions and Copilot Chat's editor context | **Vendor-enforced, server-side, for the surfaces it covers** — but per GitHub's own documentation it is **NOT applied to Copilot CLI, the Copilot coding agent, or Copilot Chat's agent mode.** A policy that assumes content exclusion covers agent mode is wrong. |
+| `copilot-yaml` | Pasted into repo/org Settings → Copilot → Content exclusion (this file is not consumed automatically — `wardkeep` makes no network calls and cannot upload it for you) | GitHub Copilot code completions and Copilot Chat's editor context | **Vendor-enforced, server-side, for the surfaces it covers** — but per GitHub's own documentation it is **NOT applied to Copilot CLI, the Copilot coding agent, or Copilot Chat's agent mode.** A policy that assumes content exclusion covers agent mode is wrong. |
 | `aiignore` | `.aiignore` | Whichever tools choose to read it | **Community convention, not a guaranteed feature** — comparable to `.copilotignore`. Some tools document honoring a file with this name; nothing here can confirm any given editor actually does. |
 
 None of these three replace scanning. They reduce what a vendor's tool is *offered* to read, on a
 best-effort or vendor-enforced-for-a-subset-of-surfaces basis; they never redact, warn, or block
-anything themselves, and `promptwarden emit-exclusions` does not verify that any target editor
+anything themselves, and `wardkeep emit-exclusions` does not verify that any target editor
 picked the file up.
 
 ## Agent mode / MCP — the strongest lever, documented separately
 
 Agent-mode tool calls (Claude Code, Cursor's agent mode, Copilot's agent mode, and any other
 client that speaks MCP over stdio to a locally-run server) are the one IDE-adjacent surface with a
-real interception point: `promptwarden mcp -- <server command>` sits between the MCP client and
+real interception point: `wardkeep mcp -- <server command>` sits between the MCP client and
 the real server, scanning both tool *arguments* and tool *results* against the resolved policy —
 the inbound direction nothing else in this project covers. It reaches Claude Code, Claude Desktop,
 Cursor, VS Code, Windsurf, and JetBrains through a single config-file edit (pointing the server's

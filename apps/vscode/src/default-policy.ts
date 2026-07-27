@@ -1,7 +1,7 @@
-import { Policy } from "@promptwarden/policy-engine";
+import { Policy } from "@wardkeep/policy-engine";
 
 /**
- * Built-in fallback policy, used whenever `promptwarden.policyPath` is
+ * Built-in fallback policy, used whenever `wardkeep.policyPath` is
  * unset, unreadable, or fails `parsePolicy` validation. Mirrors
  * apps/cli/src/policy.ts's BUILTIN_DEFAULT_POLICY (same profile as the
  * browser extension's FALLBACK_POLICY in apps/extension/src/default-policy.ts)

@@ -2,17 +2,17 @@
  * CLI policy discovery.
  *
  * Precedence (highest wins), per docs/ROADMAP.md §2 — deliberately the
- * INVERSE of "nearest file wins", because a `.promptwarden.json` shipped
+ * INVERSE of "nearest file wins", because a `.wardkeep.json` shipped
  * inside an untrusted `git clone` must never be able to downgrade a strict
  * rule:
  *
- *   1. /etc/promptwarden/policy.json  — root-owned, the managed-storage
+ *   1. /etc/wardkeep/policy.json  — root-owned, the managed-storage
  *      analogue; what makes the existing GPO/Intune/Jamf docs extend to
  *      the CLI.
- *   2. $PROMPTWARDEN_POLICY           — a PATH, never inline JSON (env vars
+ *   2. $WARDKEEP_POLICY           — a PATH, never inline JSON (env vars
  *      leak via `ps -E` and CI logs).
- *   3. $XDG_CONFIG_HOME/promptwarden/policy.json (default ~/.config)
- *   4. repo-local .promptwarden.json, found by walking up from cwd, applied
+ *   3. $XDG_CONFIG_HOME/wardkeep/policy.json (default ~/.config)
+ *   4. repo-local .wardkeep.json, found by walking up from cwd, applied
  *      STRICTNESS-MONOTONIC ONLY: it may raise a rule's action (per the
  *      severity order allow < observe < warn < redact < block), never lower
  *      it below the built-in default's floor, never turn logging up to
@@ -42,7 +42,7 @@
 import { lstat, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { Action, DetectorRule, Policy, parsePolicy } from "@promptwarden/policy-engine";
+import { Action, DetectorRule, Policy, parsePolicy } from "@wardkeep/policy-engine";
 
 const ACTION_SEVERITY: Record<Action, number> = {
   allow: 0,
@@ -116,7 +116,7 @@ export function applyStrictnessMonotonicClamp(candidate: Policy, floor: Policy):
     // exception list toward: the only strictness-monotonic value for the
     // untrusted repo-local layer is none at all, so it is stripped outright
     // rather than merged/intersected with the floor's (which never carries
-    // any). Without this, a `.promptwarden.json` inside an untrusted `git
+    // any). Without this, a `.wardkeep.json` inside an untrusted `git
     // clone` could ship an exception with a broad pattern (e.g. `.*`) that
     // silently suppresses every finding for a detector the floor requires.
     exceptions: undefined,
@@ -130,29 +130,29 @@ async function loadPolicyFile(filePath: string): Promise<Policy | undefined> {
     raw = await readFile(filePath, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw new Error(`promptwarden: cannot read policy file ${filePath}: ${(err as Error).message}`);
+    throw new Error(`wardkeep: cannot read policy file ${filePath}: ${(err as Error).message}`);
   }
   let json: unknown;
   try {
     json = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`promptwarden: ${filePath} is not valid JSON: ${(err as Error).message}`);
+    throw new Error(`wardkeep: ${filePath} is not valid JSON: ${(err as Error).message}`);
   }
   try {
     return parsePolicy(json);
   } catch (err) {
-    throw new Error(`promptwarden: ${filePath} failed policy validation: ${(err as Error).message}`);
+    throw new Error(`wardkeep: ${filePath} failed policy validation: ${(err as Error).message}`);
   }
 }
 
 /**
  * Walk from `startDir` up to the filesystem root looking for
- * `.promptwarden.json`. Returns the first match's path, or undefined.
+ * `.wardkeep.json`. Returns the first match's path, or undefined.
  */
 export async function findRepoLocalPolicyPath(startDir: string): Promise<string | undefined> {
   let dir = resolve(startDir);
   for (;;) {
-    const candidate = join(dir, ".promptwarden.json");
+    const candidate = join(dir, ".wardkeep.json");
     try {
       await lstat(candidate);
       return candidate;
@@ -187,7 +187,7 @@ export async function isSafeLocalPolicyFile(filePath: string): Promise<boolean> 
 export interface PolicyDiscoveryPaths {
   /** Root-owned managed-storage analogue. */
   etcPath: string;
-  /** Resolved value of $PROMPTWARDEN_POLICY, or undefined if unset. */
+  /** Resolved value of $WARDKEEP_POLICY, or undefined if unset. */
   envPolicyPath: string | undefined;
   /** Resolved value of $XDG_CONFIG_HOME (default ~/.config). */
   xdgConfigHome: string;
@@ -197,8 +197,8 @@ export interface PolicyDiscoveryPaths {
 
 function defaultDiscoveryPaths(): PolicyDiscoveryPaths {
   return {
-    etcPath: "/etc/promptwarden/policy.json",
-    envPolicyPath: process.env.PROMPTWARDEN_POLICY,
+    etcPath: "/etc/wardkeep/policy.json",
+    envPolicyPath: process.env.WARDKEEP_POLICY,
     xdgConfigHome: process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
     cwd: process.cwd(),
   };
@@ -212,36 +212,36 @@ function defaultDiscoveryPaths(): PolicyDiscoveryPaths {
  * suite must never assume or attempt).
  */
 export async function loadPolicyFrom(paths: PolicyDiscoveryPaths): Promise<{ policy: Policy; source: string }> {
-  // 1. /etc/promptwarden/policy.json — present-but-broken is a hard error;
+  // 1. /etc/wardkeep/policy.json — present-but-broken is a hard error;
   // falling through would hand control to a less-trusted layer underneath.
   const etc = await loadPolicyFile(paths.etcPath);
   if (etc) return { policy: etc, source: paths.etcPath };
 
-  // 2. $PROMPTWARDEN_POLICY, as a path. Set-but-unreadable/invalid is a hard
+  // 2. $WARDKEEP_POLICY, as a path. Set-but-unreadable/invalid is a hard
   // error for the same reason — the user explicitly named this file.
   if (paths.envPolicyPath && paths.envPolicyPath.trim() !== "") {
     const fromEnv = await loadPolicyFile(paths.envPolicyPath);
     if (fromEnv === undefined) {
       throw new Error(
-        `promptwarden: $PROMPTWARDEN_POLICY is set to "${paths.envPolicyPath}", but that file does not exist`,
+        `wardkeep: $WARDKEEP_POLICY is set to "${paths.envPolicyPath}", but that file does not exist`,
       );
     }
     return { policy: fromEnv, source: paths.envPolicyPath };
   }
 
-  // 3. $XDG_CONFIG_HOME/promptwarden/policy.json
-  const xdgPath = join(paths.xdgConfigHome, "promptwarden", "policy.json");
+  // 3. $XDG_CONFIG_HOME/wardkeep/policy.json
+  const xdgPath = join(paths.xdgConfigHome, "wardkeep", "policy.json");
   const fromXdg = await loadPolicyFile(xdgPath);
   if (fromXdg) return { policy: fromXdg, source: xdgPath };
 
-  // 4. repo-local .promptwarden.json — strictness-monotonic only, and only
+  // 4. repo-local .wardkeep.json — strictness-monotonic only, and only
   // ever skipped (never fatal) on any rejection.
   const repoLocalPath = await findRepoLocalPolicyPath(paths.cwd);
   if (repoLocalPath) {
     const safe = await isSafeLocalPolicyFile(repoLocalPath);
     if (!safe) {
       process.stderr.write(
-        `promptwarden: ignoring ${repoLocalPath} — it is a symlink or not owned by the current user\n`,
+        `wardkeep: ignoring ${repoLocalPath} — it is a symlink or not owned by the current user\n`,
       );
     } else {
       let candidate: Policy | undefined;

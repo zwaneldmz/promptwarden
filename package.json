@@ -1,5 +1,5 @@
 {
-  "name": "promptwarden",
+  "name": "wardkeep",
   "private": true,
   "version": "0.1.0",
   "workspaces": [
@@ -8,10 +8,10 @@
   ],
   "scripts": {
     "build:engine": "cd packages/policy-engine && ../../node_modules/.bin/tsc",
-    "build:cli": "esbuild apps/cli/src/cli.ts apps/cli/src/policy.ts apps/cli/src/events.ts apps/cli/src/scan.ts apps/cli/src/hooks/claude-code.ts apps/cli/src/mcp/gateway.ts apps/cli/src/exclusions.ts --bundle --platform=node --format=esm --outdir=apps/cli/dist --outbase=apps/cli/src --alias:@promptwarden/policy-engine=./packages/policy-engine/src/index.ts --banner:js=\"#!/usr/bin/env node\" && chmod +x apps/cli/dist/cli.js",
+    "build:cli": "esbuild apps/cli/src/cli.ts apps/cli/src/policy.ts apps/cli/src/events.ts apps/cli/src/scan.ts apps/cli/src/hooks/claude-code.ts apps/cli/src/mcp/gateway.ts apps/cli/src/exclusions.ts --bundle --platform=node --format=esm --outdir=apps/cli/dist --outbase=apps/cli/src --alias:@wardkeep/policy-engine=./packages/policy-engine/src/index.ts --banner:js=\"#!/usr/bin/env node\" && chmod +x apps/cli/dist/cli.js",
     "typecheck": "node_modules/.bin/tsc -p apps/extension/tsconfig.json --noEmit && node_modules/.bin/tsc -p apps/cli/tsconfig.json --noEmit",
     "test": "npm run build:engine && npm run build:cli && cd packages/policy-engine && node --test 'dist/test/*.test.js' && cd ../../apps/cli && node --test 'test/*.test.mjs'",
-    "build:extension": "esbuild apps/extension/src/content.ts --bundle --format=iife --outfile=apps/extension/content.bundle.js --alias:@promptwarden/policy-engine=./packages/policy-engine/src/index.ts && esbuild apps/extension/src/background.ts --bundle --format=iife --outfile=apps/extension/background.js",
+    "build:extension": "esbuild apps/extension/src/content.ts --bundle --format=iife --outfile=apps/extension/content.bundle.js --alias:@wardkeep/policy-engine=./packages/policy-engine/src/index.ts && esbuild apps/extension/src/background.ts --bundle --format=iife --outfile=apps/extension/background.js",
     "build:playground": "node apps/playground/build.mjs",
     "smoke": "node tools/e2e-smoke.mjs"
   },

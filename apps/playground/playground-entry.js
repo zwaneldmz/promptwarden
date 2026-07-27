@@ -11,7 +11,7 @@
 import * as engine from "../../packages/policy-engine/src/index.ts";
 import { mountPolicyEditor } from "./policy-editor.js";
 
-const STORAGE_KEY = "promptwarden-playground-policy";
+const STORAGE_KEY = "wardkeep-playground-policy";
 
 function makeStore() {
   let memory = null;

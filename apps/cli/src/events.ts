@@ -5,7 +5,7 @@
  * apps/extension/src/background.ts: MAX_BUFFERED, DEFAULT_RETENTION_DAYS,
  * retentionDaysOf, isExpired) against a local JSONL file instead of
  * chrome.storage.local: append one `toLogRecord` line per call to
- * `${XDG_STATE_HOME:-~/.local/state}/promptwarden/events.jsonl`, mode 0600,
+ * `${XDG_STATE_HOME:-~/.local/state}/wardkeep/events.jsonl`, mode 0600,
  * capped at 500 records and age-pruned by the resolved policy's
  * `retentionDays` (default 90).
  *
@@ -28,7 +28,7 @@
 import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { EvaluationResult, Policy, toLogRecord } from "@promptwarden/policy-engine";
+import { EvaluationResult, Policy, toLogRecord } from "@wardkeep/policy-engine";
 
 const MAX_BUFFERED = 500;
 const DEFAULT_RETENTION_DAYS = 90;
@@ -36,7 +36,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 function eventsFilePath(): string {
   const stateHome = process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
-  return join(stateHome, "promptwarden", "events.jsonl");
+  return join(stateHome, "wardkeep", "events.jsonl");
 }
 
 /** Same defensive read as the extension's retentionDaysOf: anything missing, non-numeric, or non-positive falls back to the documented default. */

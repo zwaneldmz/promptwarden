@@ -1,4 +1,4 @@
-# Deploying PromptWarden via Microsoft Intune (Chrome and Edge)
+# Deploying Wardkeep via Microsoft Intune (Chrome and Edge)
 
 **Note:** not yet verified against a real managed tenant; treat the steps below as unconfirmed until tested end-to-end.
 
@@ -15,9 +15,9 @@ the install, (2) push the managed policy JSON. Do both for either browser you ta
   policies in Step 1). Confirm your tenant's catalog actually lists them before relying on
   this doc — catalog contents are Microsoft/Google-maintained and can shift between when this
   was written and when you read it.
-- The PromptWarden **Chrome Web Store extension ID** (`<PROMPTWARDEN_EXTENSION_ID>` — not yet
+- The Wardkeep **Chrome Web Store extension ID** (`<WARDKEEP_EXTENSION_ID>` — not yet
   issued, see the same caveat as `DEPLOY_GOOGLE_ADMIN.md`) and, separately, the **Edge
-  Add-ons extension ID** (`<PROMPTWARDEN_EDGE_EXTENSION_ID>` — Edge and Chrome Web Store
+  Add-ons extension ID** (`<WARDKEEP_EDGE_EXTENSION_ID>` — Edge and Chrome Web Store
   listings get different extension IDs even for identical code, because the ID is derived
   from the store's own signing key, not the extension's). Neither store listing has shipped
   yet — check actual status before deploying.
@@ -29,14 +29,14 @@ Platform **Windows 10 and later**, Profile type **Settings catalog**. Add the se
 **Google Chrome / Extensions / Extension install forcelist**. Add one entry:
 
 ```
-<PROMPTWARDEN_EXTENSION_ID>;https://clients2.google.com/service/update2/crx
+<WARDKEEP_EXTENSION_ID>;https://clients2.google.com/service/update2/crx
 ```
 
 **Edge:** same flow, setting **Microsoft Edge / Extensions / Extension Installation
 Forcelist**. Add one entry:
 
 ```
-<PROMPTWARDEN_EDGE_EXTENSION_ID>;https://edge.microsoft.com/extensionwebstorebase/v1/crx
+<WARDKEEP_EDGE_EXTENSION_ID>;https://edge.microsoft.com/extensionwebstorebase/v1/crx
 ```
 
 Assign each profile to the target device or user group. This is the Intune-native
@@ -48,7 +48,7 @@ just without you touching the registry directly.
 ## Step 2 — Push the managed policy JSON (extension-specific "3rd-party" policy)
 
 This is the part Intune's Settings Catalog **cannot** expose as a native toggle: `policy` and
-`extraHosts` are PromptWarden's own schema
+`extraHosts` are Wardkeep's own schema
 ([`apps/extension/managed_schema.json`](../apps/extension/managed_schema.json)), not a
 Chrome/Edge-shipped setting, so there is no pre-built catalog entry for it. Chrome and Edge
 both read this class of setting from the registry path
@@ -61,7 +61,7 @@ arbitrary per-extension registry trees, so use one of the two options below.
 Intune's Settings Catalog supports importing a custom ADMX/ADML pair
 (**Devices** → **Configuration** → **Import ADMX**). Author a small ADMX that declares the
 `policy` (string) and `extraHosts` (list) elements under the
-`Software\Policies\Google\Chrome\3rdparty\extensions\<PROMPTWARDEN_EXTENSION_ID>\policy`
+`Software\Policies\Google\Chrome\3rdparty\extensions\<WARDKEEP_EXTENSION_ID>\policy`
 key (Edge: swap in `Software\Policies\Microsoft\Edge\...` and the Edge extension ID), then
 configure the resulting policy like any built-in Settings Catalog setting. This is the more
 "supported" long-term path but requires authoring and validating a custom ADMX, which is out
@@ -76,8 +76,8 @@ Windows, run in **System** context:
 
 ```powershell
 $ids = @{
-  "Google\Chrome" = "<PROMPTWARDEN_EXTENSION_ID>"
-  "Microsoft\Edge" = "<PROMPTWARDEN_EDGE_EXTENSION_ID>"
+  "Google\Chrome" = "<WARDKEEP_EXTENSION_ID>"
+  "Microsoft\Edge" = "<WARDKEEP_EDGE_EXTENSION_ID>"
 }
 
 $policyJson = '{"version":1,"name":"Default","hosts":["chatgpt.com","chat.openai.com","claude.ai","gemini.google.com","copilot.microsoft.com","chat.mistral.ai","www.perplexity.ai"],"rules":[{"detector":"credit_card","action":"redact"},{"detector":"iban","action":"redact"},{"detector":"at_svnr","action":"block"}],"logging":"event","defaultAction":"warn","retentionDays":90}'
@@ -122,12 +122,12 @@ mirrored in the policy's `hosts` array; see [`docs/HOST_COVERAGE.md`](HOST_COVER
 1. On an enrolled test device, run `gpupdate` is not applicable (Intune, not GPO) — instead
    force an Intune sync: **Settings app** → **Accounts** → **Access work or school** →
    your account → **Info** → **Sync**. Or wait for the normal check-in interval.
-2. `chrome://policy` (or `edge://policy`) → **Reload policies**. Confirm PromptWarden is
+2. `chrome://policy` (or `edge://policy`) → **Reload policies**. Confirm Wardkeep is
    installed (Step 1) and its extension policy card shows the `policy`/`extraHosts` values
    from Step 2 with no schema error (same red-badge check as `DEPLOY_GOOGLE_ADMIN.md`
    Verification step 2).
 3. Confirm the registry values landed as expected:
-   `reg query "HKLM\SOFTWARE\Policies\Google\Chrome\3rdparty\extensions\<PROMPTWARDEN_EXTENSION_ID>\policy"`
+   `reg query "HKLM\SOFTWARE\Policies\Google\Chrome\3rdparty\extensions\<WARDKEEP_EXTENSION_ID>\policy"`
    (adjust the hive path for Edge).
 4. Type a Luhn-valid test card number into a covered site's chat box and confirm the
    guardrail dialog fires per the pushed policy.

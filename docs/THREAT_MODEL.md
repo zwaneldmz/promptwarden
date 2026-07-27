@@ -1,11 +1,11 @@
-# PromptWarden — Threat Model
+# Wardkeep — Threat Model
 
 **Note:** managed-deployment claims below are not yet verified against a real managed tenant.
 
 Every claim below cites the file that implements it. If the cited code changes and this
 document doesn't, file an issue.
 
-## What PromptWarden stops
+## What Wardkeep stops
 
 Typed, pasted, or uploaded text-and-office content, sent from a browser in the Chrome family
 (Chrome, Edge, and other Chromium-based browsers — MV3 extensions are portable across the
@@ -35,14 +35,14 @@ that ever leaves the content script is the output of `toLogRecord`
 every logging surface in the codebase (enforced by ground rule, see
 [ENGINEERING_PLAN.md](ENGINEERING_PLAN.md) "Engineering ground rules").
 
-## What PromptWarden does NOT stop
+## What Wardkeep does NOT stop
 
 None of the following is a bug to be fixed in the current architecture — each is a boundary
 of what a browser extension can see or is scoped to see.
 
 **Direct API access.** A user (or a script, or an internal tool) calling an AI provider's API
 directly — `curl`, a Python script, a backend integration — never touches a browser tab, so
-no content script ever runs. PromptWarden has no visibility into API traffic at all; it is a
+no content script ever runs. Wardkeep has no visibility into API traffic at all; it is a
 browser-UI guardrail, not a network proxy or DLP gateway.
 
 **Mobile apps.** The ChatGPT, Claude, Gemini, Copilot, etc. iOS/Android apps are native
@@ -71,14 +71,14 @@ from any other binary the extension deliberately leaves alone.
 
 **Non-matched AI sites.** Coverage is exactly the 7 hosts in `manifest.json` today. An
 internal chat gateway, a self-hosted LLM UI, or any AI vendor not on that list is invisible to
-PromptWarden unless an admin extends coverage: [`docs/HOST_COVERAGE.md`](HOST_COVERAGE.md)'s
+Wardkeep unless an admin extends coverage: [`docs/HOST_COVERAGE.md`](HOST_COVERAGE.md)'s
 `extraHosts` mechanism (managed-storage declaration + optional-permission grant +
 background-side dynamic registration) is shipped. A deployment that has not declared and
 granted extra hosts is, by construction, a 7-host deployment, and any exposure number
 reported from it must say so ([`docs/HOST_COVERAGE.md`](HOST_COVERAGE.md) "Reporting
 requirement").
 
-**A determined insider.** PromptWarden is enforced entirely client-side, in the same browser
+**A determined insider.** Wardkeep is enforced entirely client-side, in the same browser
 process the user controls. Concretely:
 
 - A user with DevTools open, or with a userscript/console access to the page, can call a
@@ -103,13 +103,13 @@ process the user controls. Concretely:
   use.
 
 No client-side control defeats a user who controls the machine and is willing to work around
-it; PromptWarden's design goal is to catch the default, unthinking path (paste customer data,
+it; Wardkeep's design goal is to catch the default, unthinking path (paste customer data,
 hit enter), not to survive a user actively trying to exfiltrate data past it.
 
 **Copilot inside Word/Excel.** Microsoft 365 Copilot embedded in the Word/Excel/PowerPoint
 desktop applications is not a website — it doesn't run in a browser tab, so
 `content_scripts.matches` can never target it regardless of host list. This is a categorically
-different surface from `copilot.microsoft.com` (the one PromptWarden's manifest does cover),
+different surface from `copilot.microsoft.com` (the one Wardkeep's manifest does cover),
 which is a browser-based chat site.
 
 **Installing this extension — or, later, a prompt hook — does not make "no sensitive data
@@ -165,7 +165,7 @@ and action for a single event on this device. That is a per-event disclosure, no
 anonymized statistic, regardless of the "k-anonymous" language that has appeared elsewhere in
 this project's docs. K-anonymity is a property of a *merged, suppressed* dataset: it only
 starts to hold once an aggregator merges multiple devices' exports and suppresses or buckets
-any resulting cell below the chosen `k`, a step PromptWarden does not perform itself. See
+any resulting cell below the chosen `k`, a step Wardkeep does not perform itself. See
 `docs/HOST_COVERAGE.md` "Reporting requirement" for the coverage caveat that applies to the
 same export.
 

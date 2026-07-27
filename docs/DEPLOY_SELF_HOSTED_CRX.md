@@ -4,7 +4,7 @@
 
 Force-installs Chrome/Edge only accept a store URL or an update URL you host — Chrome and
 Edge do not allow force-installing an arbitrary local `.crx` file directly. This doc packs
-PromptWarden with your own signing key and serves the update manifest a self-hosted deploy
+Wardkeep with your own signing key and serves the update manifest a self-hosted deploy
 needs, so an install never depends on Chrome Web Store or Edge Add-ons review timing.
 
 **Read the warning at the bottom before you start** — a self-hosted build and a store build
@@ -14,7 +14,7 @@ policy delivery silently.
 ## Step 1 — Pack the extension with your own key
 
 ```bash
-cd "/path/to/promptwarden"
+cd "/path/to/wardkeep"
 npm install
 npm run build:extension   # produces apps/extension/content.bundle.js and background.js
 ```
@@ -25,7 +25,7 @@ Then, using a Chrome binary (any Chrome-family browser works for packing):
 # First time: no --pack-extension-key yet. This both packs apps/extension/
 # AND generates apps/extension.pem next to it — a private key.
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --pack-extension="/path/to/promptwarden/apps/extension"
+  --pack-extension="/path/to/wardkeep/apps/extension"
 
 # Produces:
 #   apps/extension.crx   (the packed, signed extension)
@@ -37,8 +37,8 @@ stays stable:
 
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --pack-extension="/path/to/promptwarden/apps/extension" \
-  --pack-extension-key="/path/to/promptwarden/apps/extension.pem"
+  --pack-extension="/path/to/wardkeep/apps/extension" \
+  --pack-extension-key="/path/to/wardkeep/apps/extension.pem"
 ```
 
 **The extension ID is derived from the public half of this key**, not assigned by any store.
@@ -51,7 +51,7 @@ how you'll actually deploy this to a fleet).
 ## Step 2 — Host the CRX and an update manifest
 
 Upload `extension.crx` to HTTPS-reachable storage you control (e.g.
-`https://updates.example.com/promptwarden.crx`). Then write and host an update manifest XML
+`https://updates.example.com/wardkeep.crx`). Then write and host an update manifest XML
 at a second URL (e.g. `https://updates.example.com/update.xml`) — this is the file Chrome
 polls to learn there's a version to fetch:
 
@@ -59,7 +59,7 @@ polls to learn there's a version to fetch:
 <?xml version='1.0' encoding='UTF-8'?>
 <gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
   <app appid='YOUR_CRX_EXTENSION_ID'>
-    <updatecheck codebase='https://updates.example.com/promptwarden.crx' version='0.1.0' />
+    <updatecheck codebase='https://updates.example.com/wardkeep.crx' version='0.1.0' />
   </app>
 </gupdate>
 ```
@@ -103,10 +103,10 @@ below for why that distinction matters here specifically.
 ## Verification
 
 1. On a test device receiving the force-install policy, confirm the extension installs from
-   your update URL (not the store) — `chrome://extensions` should show PromptWarden present;
+   your update URL (not the store) — `chrome://extensions` should show Wardkeep present;
    `chrome://policy` should list the `ExtensionInstallForcelist` entry pointing at
    `update.xml`, not `clients2.google.com`.
-2. `chrome://policy` → **Reload policies** → confirm the PromptWarden extension policy card
+2. `chrome://policy` → **Reload policies** → confirm the Wardkeep extension policy card
    (keyed under `YOUR_CRX_EXTENSION_ID`) shows your pushed `policy`/`extraHosts` values with
    no schema error.
 3. Bump the version in `manifest.json` and `update.xml`, re-pack with the same `.pem`,
@@ -120,7 +120,7 @@ below for why that distinction matters here specifically.
 
 The Chrome Web Store and Edge Add-ons sign the extension with a key you never see, so the
 extension IDs documented in `DEPLOY_GOOGLE_ADMIN.md`/`DEPLOY_INTUNE.md`/`DEPLOY_GPO.md`
-(`<PROMPTWARDEN_EXTENSION_ID>` / `<PROMPTWARDEN_EDGE_EXTENSION_ID>`) are **not the same ID**
+(`<WARDKEEP_EXTENSION_ID>` / `<WARDKEEP_EDGE_EXTENSION_ID>`) are **not the same ID**
 as `YOUR_CRX_EXTENSION_ID` from Step 1 of this doc, even though the source code is identical.
 The ID is a hash of the packaging key's public half, not of the extension's contents or name.
 

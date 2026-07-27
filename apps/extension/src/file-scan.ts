@@ -36,7 +36,7 @@ import {
   MAX_OFFICE_FILE_BYTES,
   classifyFile,
   scanBytes,
-} from "@promptwarden/policy-engine";
+} from "@wardkeep/policy-engine";
 
 export { MAX_TEXT_FILE_BYTES, MAX_OFFICE_FILE_BYTES };
 

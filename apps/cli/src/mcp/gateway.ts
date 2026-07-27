@@ -1,10 +1,10 @@
 /**
- * MCP stdio gateway (`promptwarden mcp -- <real server command> [args...]`).
+ * MCP stdio gateway (`wardkeep mcp -- <real server command> [args...]`).
  *
  * Per docs/ROADMAP.md §2's interception-mechanism table, this is the best
  * adapter after the CLI's own `scan`/`hook` front doors: it reaches Claude
  * Desktop, Claude Code, Cursor, VS Code, Windsurf and JetBrains through one
- * config-file edit (point the client at `promptwarden mcp -- <old command>`
+ * config-file edit (point the client at `wardkeep mcp -- <old command>`
  * instead of `<old command>` directly), and it is the *only* mechanism in
  * this repo that sees tool RESULTS as well as tool arguments — the inbound
  * direction nothing else covers, and precisely what `bulk_pii` exists for.
@@ -58,17 +58,17 @@
  * applying every network pattern to it). No shell is ever invoked — argv is
  * passed straight through with `shell` left at its default `false` — and the
  * child's own stderr is inherited so its diagnostics reach whoever is
- * running `promptwarden mcp`.
+ * running `wardkeep mcp`.
  *
  * Only HTTP/SSE-transport MCP servers are out of scope (stdio only); see
  * docs/MCP_GATEWAY.md.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { EvaluationResult, Finding, Policy, evaluate, toUserMessage } from "@promptwarden/policy-engine";
+import { EvaluationResult, Finding, Policy, evaluate, toUserMessage } from "@wardkeep/policy-engine";
 import { recordEvent } from "../events.js";
 import { loadPolicy } from "../policy.js";
 
-const USAGE = `Usage: promptwarden mcp -- <server command> [args...]
+const USAGE = `Usage: wardkeep mcp -- <server command> [args...]
 
   Spawns <server command> as the real MCP server (stdio transport) and
   proxies newline-delimited JSON-RPC between this process's own
@@ -78,7 +78,7 @@ const USAGE = `Usage: promptwarden mcp -- <server command> [args...]
 
   --help, -h    Print this message.
 
-Point an MCP client's server config at "promptwarden mcp -- <old command>"
+Point an MCP client's server config at "wardkeep mcp -- <old command>"
 instead of "<old command>" directly. See docs/MCP_GATEWAY.md.
 
 Exit code: the spawned server's own exit code, or 3 if the server could not
@@ -283,7 +283,7 @@ async function processOutboundLine(raw: string, ctx: GatewayContext): Promise<vo
         id,
         error: {
           code: POLICY_BLOCK_ERROR_CODE,
-          message: `PromptWarden blocked this tool call (${toUserMessage(merged)})`,
+          message: `Wardkeep blocked this tool call (${toUserMessage(merged)})`,
         },
       };
       writeLine(process.stdout, JSON.stringify(errorResponse));
@@ -353,7 +353,7 @@ async function processInboundLine(raw: string, ctx: GatewayContext): Promise<voi
   if (merged.blocked) {
     const blockedResult = {
       ...result,
-      content: [{ type: "text", text: `PromptWarden blocked this tool result (${toUserMessage(merged)})` }],
+      content: [{ type: "text", text: `Wardkeep blocked this tool result (${toUserMessage(merged)})` }],
       isError: true,
     };
     writeLine(process.stdout, JSON.stringify({ ...parsed, result: blockedResult }));
@@ -385,7 +385,7 @@ export async function runMcpGateway(argv: string[]): Promise<number> {
 
   const dashIndex = argv.indexOf("--");
   if (dashIndex !== 0 || argv.length === 1) {
-    process.stderr.write('promptwarden mcp: expected "-- <server command> [args...]"\n\n' + USAGE);
+    process.stderr.write('wardkeep mcp: expected "-- <server command> [args...]"\n\n' + USAGE);
     return 3;
   }
   const serverCmd = argv.slice(1);
@@ -401,7 +401,7 @@ export async function runMcpGateway(argv: string[]): Promise<number> {
   return new Promise<number>((resolveExitCode) => {
     // Reviewed carve-out (see file header): no shell, argv passed straight
     // through, child's own stderr inherited so its diagnostics surface to
-    // whoever is running `promptwarden mcp`.
+    // whoever is running `wardkeep mcp`.
     const child = spawn(serverCmd[0], serverCmd.slice(1), {
       stdio: ["pipe", "pipe", "inherit"],
       shell: false,
@@ -418,14 +418,14 @@ export async function runMcpGateway(argv: string[]): Promise<number> {
       outboundChain = outboundChain
         .then(() => processOutboundLine(line, ctx))
         .catch((err: unknown) => {
-          process.stderr.write(`promptwarden mcp: error scanning outbound message: ${(err as Error).message}\n`);
+          process.stderr.write(`wardkeep mcp: error scanning outbound message: ${(err as Error).message}\n`);
         });
     };
     const enqueueInbound = (line: string) => {
       inboundChain = inboundChain
         .then(() => processInboundLine(line, ctx))
         .catch((err: unknown) => {
-          process.stderr.write(`promptwarden mcp: error scanning inbound message: ${(err as Error).message}\n`);
+          process.stderr.write(`wardkeep mcp: error scanning inbound message: ${(err as Error).message}\n`);
         });
     };
 
@@ -467,7 +467,7 @@ export async function runMcpGateway(argv: string[]): Promise<number> {
     };
 
     child.on("error", (err) => {
-      process.stderr.write(`promptwarden mcp: failed to start server: ${err.message}\n`);
+      process.stderr.write(`wardkeep mcp: failed to start server: ${err.message}\n`);
       finish(3);
     });
     child.on("close", (code, signal) => {

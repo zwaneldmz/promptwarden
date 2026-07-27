@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "PromptWarden",
+  "name": "Wardkeep",
   "version": "0.1.0",
   "description": "Guardrails for AI chat: warns, redacts, or blocks sensitive customer data before it leaves the browser.",
   "permissions": ["storage"],
@@ -33,7 +33,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "PromptWarden",
+    "default_title": "Wardkeep",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

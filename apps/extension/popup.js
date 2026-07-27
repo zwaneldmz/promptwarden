@@ -1,6 +1,6 @@
 (async () => {
   // GitHub repo the "Problem melden" link opens issues against.
-  const ISSUE_REPO_URL = "https://github.com/zwaneldmz/promptwarden";
+  const ISSUE_REPO_URL = "https://github.com/zwaneldmz/wardkeep";
 
   const ACTION_PRIORITY = { block: 3, redact: 2, warn: 1 };
 
@@ -237,7 +237,7 @@
       "Diagnostics summary (category counts only, no event data, no hostnames):",
       summaryLines.length > 0 ? summaryLines.join("\n") : "(none recorded)",
     ].join("\n");
-    const params = new URLSearchParams({ title: `PromptWarden issue (v${version})`, body });
+    const params = new URLSearchParams({ title: `Wardkeep issue (v${version})`, body });
     return `${ISSUE_REPO_URL}/issues/new?${params.toString()}`;
   }
 

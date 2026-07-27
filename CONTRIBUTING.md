@@ -31,10 +31,12 @@ product makes to customers about privacy:
    `WebSocket`, `sendBeacon`, or similar in the content-script/policy-engine
    evaluation path. CI enforces this with a no-egress gate; a PR that trips
    it needs a documented exception, not a workaround.
-2. **All logging goes through `toLogRecord`.** If you add a new place that
-   might log something, it must construct that record via `toLogRecord`, not
-   an ad hoc object. This is the single privacy gate that guarantees
-   event-mode logs provably contain no prompt content.
+2. **All logging goes through `toLogRecord`; all model-visible text goes
+   through `toUserMessage`.** If you add a new place that might log
+   something, it must construct that record via `toLogRecord`, not an ad hoc
+   object. If you add text that a model or user sees (hook stderr, MCP error
+   messages), it must go through `toUserMessage`. These are the two privacy
+   gates that guarantee no matched content leaks.
 3. **No site-specific CSS selectors** in the content script. Interception is
    selector-less (capture-phase key/submit handling) on purpose — selectors
    break on every redesign and turn into an unmaintainable per-site list.
@@ -81,15 +83,15 @@ CI enforces this with a fixture-hygiene grep over the test directories; see
 
 ```bash
 npm install
-npx tsc -p apps/extension/tsconfig.json --noEmit
+npm run typecheck            # tsc --noEmit for extension + CLI
 npm run build:extension
-npm test
+npm test                     # builds engine + CLI, runs both test suites
 ```
 
-`npm test` builds `packages/policy-engine` and runs its `node --test` suite
-(includes the benchmark gate on evaluation latency). Please run all three
-before opening a PR — CI runs the same commands plus a no-egress check on
-the built extension bundle.
+`npm test` builds `packages/policy-engine` and `apps/cli`, then runs
+`node --test` for both (includes the benchmark gate on evaluation latency).
+Please run all three before opening a PR — CI runs the same commands plus a
+no-egress check on the built bundles.
 
 ## Pull requests
 
